@@ -1,0 +1,23 @@
+# Ignore Mac system files
+.DS_Store
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore virtual environment folders
+my_venv/
+venv/
+
+# Ignore IDE/editor settings
+.idea/
+.vscode/
+
+# Ignore other files and directories
+environment.yml
+training-runs/
+wandb/
+datasets/
+/datasets/
+datasets/cifar-10-python.tar.gz
+datasets/cifar10-32x32.zip
