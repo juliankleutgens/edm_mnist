@@ -146,8 +146,8 @@ def main(**kwargs):
 
     # Network architecture.
     if opts.arch == 'ddpmpp':
-        c.network_kwargs.update(model_type='SongUNet', embedding_type='positional', encoder_type='standard', decoder_type='standard', num_blocks=2)
-        c.network_kwargs.update(channel_mult_noise=1, resample_filter=[1,1], model_channels=32, channel_mult=[1,1,2])
+        c.network_kwargs.update(model_type='SongUNet', embedding_type='positional', encoder_type='standard', decoder_type='standard', num_blocks=opts.num_blocks)
+        c.network_kwargs.update(channel_mult_noise=1, resample_filter=opts.resample_filter, model_channels=opts.model_channels, channel_mult=opts.channel_mult)
     elif opts.arch == 'ncsnpp':
         c.network_kwargs.update(model_type='SongUNet', embedding_type='fourier', encoder_type='residual', decoder_type='standard')
         c.network_kwargs.update(channel_mult_noise=2, resample_filter=[1,3,3,1], model_channels=128, channel_mult=[2,2,2])
