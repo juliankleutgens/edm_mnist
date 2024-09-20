@@ -243,8 +243,8 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
         wandb.init(id=wandb_run_id, resume="allow")
 
 
-    if sampler_kwargs["local_computer"]:
-        device = torch.device('cpu')
+    #if sampler_kwargs["local_computer"]:
+    device = torch.device('cpu')
 
 
     #dist.init()
@@ -254,6 +254,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
 
     # Rank 0 goes first.
     if dist.get_rank() != 0:
+        print(f'Rank {dist.get_rank()} waiting for rank 0...')
         torch.distributed.barrier()
 
     # Load network.
@@ -268,6 +269,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
 
     # Other ranks follow.
     if dist.get_rank() == 0:
+        print(f'Rank 0 is ready, other ranks can start...')
         torch.distributed.barrier()
 
     # Loop over batches.
