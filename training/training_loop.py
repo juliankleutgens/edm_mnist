@@ -261,7 +261,7 @@ def training_loop(
             dist.print0('Aborting...')
 
         # Save network snapshot.
-        if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0):
+        if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0) and cur_tick != 0:
             print(f"Saving snapshot at tick {cur_tick} and iteration {i}")
             data = dict(ema=ema, loss_fn=loss_fn, augment_pipe=augment_pipe, dataset_kwargs=dict(dataset_kwargs))
             for key, value in data.items():
