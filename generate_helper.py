@@ -255,7 +255,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
     # Rank 0 goes first.
     if dist.get_rank() != 0:
         print(f'Rank {dist.get_rank()} waiting for rank 0...')
-        torch.distributed.barrier()
+        #torch.distributed.barrier()
 
     # Load network.
     if net is None:
@@ -270,13 +270,13 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
     # Other ranks follow.
     if dist.get_rank() == 0:
         print(f'Rank 0 is ready, other ranks can start...')
-        torch.distributed.barrier()
+        #torch.distributed.barrier()
 
     # Loop over batches.
     #dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
     print(f'Generating {len(seeds)} images to "{outdir}"...')
     for batch_seeds in tqdm.tqdm(rank_batches, unit='batch', disable=(dist.get_rank() != 0)):
-        torch.distributed.barrier()
+        #torch.distributed.barrier()
         batch_size = len(batch_seeds)
         if batch_size == 0:
             continue
@@ -316,7 +316,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
 
 
     # Done.
-    torch.distributed.barrier()
+    #torch.distributed.barrier()
     dist.print0('Done.')
 
 
