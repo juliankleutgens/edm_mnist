@@ -273,7 +273,8 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
         torch.distributed.barrier()
 
     # Loop over batches.
-    dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
+    #dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
+    print(f'Generating {len(seeds)} images to "{outdir}"...')
     for batch_seeds in tqdm.tqdm(rank_batches, unit='batch', disable=(dist.get_rank() != 0)):
         torch.distributed.barrier()
         batch_size = len(batch_seeds)
