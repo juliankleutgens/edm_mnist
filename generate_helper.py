@@ -16,6 +16,7 @@ import pickle
 import numpy as np
 import torch
 import PIL.Image
+from copy import deepcopy
 import dnnlib
 from torch_utils import distributed as dist
 
@@ -264,7 +265,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
             net = pickle.load(f)['ema'].to(device)
     else: # Use the provided network
         dist.print0(f'Using provided network...')
-        net = net.to(device)
+        net = deepcopy(net).to(device)
 
 
     # Other ranks follow.
