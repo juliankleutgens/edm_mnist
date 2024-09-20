@@ -50,7 +50,7 @@ def parse_int_list(s):
 @click.option('--precond',       help='Preconditioning & loss function', metavar='vp|ve|edm',       type=click.Choice(['vp', 've', 'edm']), default='edm', show_default=True)
 
 # Hyperparameters.
-@click.option('--duration',      help='Training duration, in kimg', metavar='MIMG',                          type=click.FloatRange(min=0, min_open=True), default=200, show_default=True)
+@click.option('--duration',      help='Training duration, in number of training iterations', metavar='MIMG',                          type=click.FloatRange(min=0, min_open=True), default=200, show_default=True)
 @click.option('--batch',         help='Total batch size', metavar='INT',                            type=click.IntRange(min=1), default=2, show_default=True)
 @click.option('--batch-gpu',     help='Limit batch size per GPU', metavar='INT',                    type=click.IntRange(min=1))
 @click.option('--cbase',         help='Channel multiplier  [default: varies]', metavar='INT',       type=int)
@@ -71,7 +71,7 @@ def parse_int_list(s):
 # I/O-related.
 @click.option('--desc',          help='String to include in result dir name', metavar='STR',        type=str)
 @click.option('--nosubdir',      help='Do not create a subdirectory for results',                   is_flag=True)
-@click.option('--tick',          help='How often to print progress', metavar='KIMG',                type=click.IntRange(min=1), default=50, show_default=True)
+@click.option('--tick',          help='How often to print progress', metavar='KIMG',                type=click.IntRange(min=1), default=30, show_default=True)
 @click.option('--snap',          help='How often to save snapshots', metavar='TICKS',               type=click.IntRange(min=1), default=10, show_default=True)
 @click.option('--dump',          help='How often to dump state', metavar='TICKS',                   type=click.IntRange(min=1), default=2, show_default=True)
 @click.option('--seed',          help='Random seed  [default: random]', metavar='INT',              type=int)
@@ -87,6 +87,14 @@ def parse_int_list(s):
 @click.option('--num_cond_frames', help='The number of frames to condition on. One has no condition for 0, which is set by default', type=int, default=0)
 @click.option('--generate_images',help='Generate images after making the snapshot of the model',  is_flag=True)
 @click.option('--digit_filter',  help='The digits to filter out from the MNIST dataset',           type=parse_int_list)
+
+# model options
+@click.option('--num_blocks',   help='The number of blocks in the model',                         type=int, default=4)
+@click.option('--channel_mult_noise', help='The channel multiplier for the noise',                type=int, default=1)
+@click.option('--resample_filter', help='The resample filter for the model',                      type=parse_int_list, default=[1,1])
+@click.option('--model_channels', help='The number of channels in the model',                     type=int, default=32)
+@click.option('--channel_mult',  help='The channel multiplier for the model',                     type=parse_int_list, default=[1,1,2])
+
 
 def main(**kwargs):
     """Train diffusion-based generative model using the techniques described in the
@@ -171,14 +179,32 @@ def main(**kwargs):
     c.network_kwargs.update(dropout=opts.dropout, use_fp16=opts.fp16)
 
     # Training options.
-    c.total_kimg = max(int(opts.duration), 1)
+    total_img = max(int(opts.duration*opts.batch), 1)
+    c.total_kimg = total_img / 1000
+    if opts.moving_mnist:
+        total_img = opts.duration * opts.seq_len * opts.batch
+        c.total_kimg = total_img / 1000
     c.ema_halflife_kimg = int(opts.ema * 1000)
     c.update(batch_size=opts.batch, batch_gpu=opts.batch_gpu)
     c.update(loss_scaling=opts.ls, cudnn_benchmark=opts.bench)
+    # those are k images!
     tick_interval = max(int(c.total_kimg // opts.tick), 1)
     snap_interval = max(int(c.total_kimg // opts.snap), 1)
     dump_interval = max(int(c.total_kimg // opts.dump), 1)
-    c.update(kimg_per_tick=tick_interval, snapshot_ticks=snap_interval, state_dump_ticks=dump_interval)
+    print('---------- Iterations, Number of Images, Saving times ----------')
+    print(f'kimg_per_tick: {tick_interval} every k img')
+    print(f'snapshot_ticks: {snap_interval} every k img')
+    print(f'state_dump_ticks: {dump_interval} every k img')
+    print(f'Total kimg: {c.total_kimg}')
+    num_iterations = opts.duration
+    print(f'Number of iterations: {num_iterations}')
+    # calculate at which iterations the snapshots are saved
+    snapshot_iterations = [i for i in range(0, int(num_iterations), int(snap_interval * num_iterations//c.total_kimg))]
+
+    #tick_iterations = [i for i in range(0, int(num_iterations), int(tick_interval * num_iterations//c.total_kimg))]
+    print(f'Snapshots are saved at iterations: {snapshot_iterations[1:]}')
+    print('------------------------------------------')
+    c.update(kimg_per_tick=tick_interval, snapshot_ticks=snap_interval, state_dump_ticks=dump_interval, snapshot_iterations=snapshot_iterations)
 
     # Random seed.
     if opts.seed is not None:

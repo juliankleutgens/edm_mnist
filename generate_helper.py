@@ -212,7 +212,7 @@ def parse_int_list(s):
     return ranges
 
 #----------------------------------------------------------------------------
-def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), local_computer=False,dist=None):
+def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), local_computer=False, dist=None, net=None):
     """Generate random images using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
     """
@@ -257,9 +257,13 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
         torch.distributed.barrier()
 
     # Load network.
-    dist.print0(f'Loading network from "{network_pkl}"...')
-    with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
-        net = pickle.load(f)['ema'].to(device)
+    if net is None:
+        dist.print0(f'Loading network from "{network_pkl}"...')
+        with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
+            net = pickle.load(f)['ema'].to(device)
+    else: # Use the provided network
+        net = net.to(device)
+
 
     # Other ranks follow.
     if dist.get_rank() == 0:

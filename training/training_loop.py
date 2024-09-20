@@ -22,6 +22,7 @@ from torch_utils import misc
 from torch_utils.utility import *
 import wandb
 from generate_helper import generate_images_during_training
+from torchsummary import summary
 
 def print_gpu_memory():
     if torch.cuda.is_available():
@@ -30,6 +31,17 @@ def print_gpu_memory():
             print(f"  Allocated: {torch.cuda.memory_allocated(i) / 1024 ** 2:.2f} MB")
             print(f"  Cached:    {torch.cuda.memory_reserved(i) / 1024 ** 2:.2f} MB")
             print("-" * 30)
+
+
+class ModelWrapper(torch.nn.Module):
+    def __init__(self, model, sigma_value):
+        super(ModelWrapper, self).__init__()
+        self.model = model
+        self.sigma_value = sigma_value
+
+    def forward(self, x):
+        sigma = torch.full((x.shape[0],), self.sigma_value).to(x.device)
+        return self.model(x, sigma)
 
 
 # ----------------------------------------------------------------------------
@@ -65,11 +77,17 @@ def training_loop(
         num_cond_frames=0,  # Number of conditional frames for moving mnist
         generate_images=False,  # Generate images after making the snapshot
         digit_filter= None, # Filter the digits in the moving mnist dataset must be a list of integers
+        snapshot_iterations= None, # List of iterations to make snapshots
+
 ):
+    num_iterations =  total_kimg*1000 // (seq_len * batch_size)
+    tick_iterations = [i for i in range(0, int(num_iterations), int(kimg_per_tick * num_iterations//total_kimg))]
+    tick_iterations = tick_iterations[1:]  # Remove the first iteration
     if local_computer:
         device = torch.device('cpu')
         total_kimg = 1
-
+        tick_iterations = [2]
+        snapshot_iterations = [2]
     mnist = moving_mnist.get('moving_mnist', False)
     if mnist:
         # seq_len = 64
@@ -142,7 +160,9 @@ def training_loop(
                 images = torch.zeros([batch_gpu, dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution], device=device)
             sigma = torch.ones([batch_gpu], device=device)
             labels = torch.zeros([batch_gpu, net.label_dim], device=device)
-            misc.print_module_summary(net, [images, sigma, labels], max_nesting=2)
+            wrapped_model = ModelWrapper(net, sigma_value=1.0)  # Set the sigma value
+            # Run summary with the input size (1 channels, 32x32)
+            summary(wrapped_model, input_size=(dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution))
 
     # Setup optimizer.
     dist.print0('Setting up optimizer...')
@@ -230,8 +250,10 @@ def training_loop(
         # Perform maintenance tasks once per tick.
         cur_nimg += batch_size
         done = (cur_nimg >= total_kimg * 1000)
-        if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
-            continue
+        if (not done) and (cur_tick != 0) and not i in tick_iterations and i not in snapshot_iterations:
+                continue
+        #if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
+
 
         # Print status line, accumulating the same information in training_stats.
         tick_end_time = time.time()
@@ -250,6 +272,7 @@ def training_loop(
             f"gpumem {training_stats.report0('Resources/peak_gpu_mem_gb', torch.cuda.max_memory_allocated(device) / 2 ** 30):<6.2f}"]
         fields += [
             f"reserved {training_stats.report0('Resources/peak_gpu_mem_reserved_gb', torch.cuda.max_memory_reserved(device) / 2 ** 30):<6.2f}"]
+        fields += [f"iteration {i:<6d}"]
         if not local_computer:
             torch.cuda.reset_peak_memory_stats()
         dist.print0(' '.join(fields))
@@ -261,7 +284,7 @@ def training_loop(
             dist.print0('Aborting...')
 
         # Save network snapshot.
-        if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0) and cur_tick != 0:
+        if (snapshot_ticks is not None) and (done or i in snapshot_iterations)  and cur_tick != 0:
             print(f"Saving snapshot at tick {cur_tick} and iteration {i}")
             data = dict(ema=ema, loss_fn=loss_fn, augment_pipe=augment_pipe, dataset_kwargs=dict(dataset_kwargs))
             for key, value in data.items():
@@ -284,7 +307,7 @@ def training_loop(
                     print(f"Generating images at tick {cur_tick} and iteration {i}")
                     generate_images_during_training( network_pkl = snapshot_path,
                                      outdir = os.path.join(run_dir, f'generated_images_{i}'),
-                                     seeds = list(range(1, 17)),
+                                     seeds = list(range(1, 32)),
                                      class_idx=None,
                                      max_batch_size=64,
                                      device=torch.device('cuda'),
@@ -292,6 +315,7 @@ def training_loop(
                                      subdirs=False,
                                      local_computer=local_computer,
                                      dist=dist,
+                                     net=net,
                                      )
                     print(f"Generated images in {time.time() - t:.2f} seconds")
                 except Exception as e:
