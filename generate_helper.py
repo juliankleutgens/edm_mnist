@@ -302,6 +302,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        wandb_images = []
         for seed, image_np in zip(batch_seeds, images_np):
             image_dir = os.path.join(outdir, f'{seed-seed%1000:06d}') if subdirs else outdir
             os.makedirs(image_dir, exist_ok=True)
@@ -313,9 +314,13 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
                 img = PIL.Image.fromarray(image_np, 'RGB')
                 img.save(image_path)
         # Log image to W&B
-            if wandb_run_id:
-                # save the folder with W&B of the images
-                wandb.save(image_path)
+                # Create W&B Image object
+            wandb_image = wandb.Image(img, caption=f"Seed: {seed}")
+            wandb_images.append(wandb_image)
+
+            # Log all images to W&B
+        if wandb.run is not None:
+            wandb.log({"generated_images": wandb_images})
 
 
 
