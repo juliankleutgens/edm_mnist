@@ -32,7 +32,7 @@ class MovingMNIST(object):
             indices = []
             for i in range(len(self.data)):
                 t = self.data.targets[i].item()
-                if t not in self.digit_filter:
+                if t in self.digit_filter:
                     indices.append(i)
             self.data = torch.utils.data.Subset(self.data, indices)
 
@@ -149,12 +149,13 @@ def main():
     train = True  # Set to False if you want to use the test set
     data_root = './data'  # The directory where the MNIST data will be downloaded
     seq_len = 64  # Length of the sequence
-    num_digits = 2  # Number of digits to display in each sequence
+    num_digits = 1  # Number of digits to display in each sequence
     image_size = 32  # Size of the image frame
     deterministic = True  # Whether the movement should be deterministic
+    digit_filter = [0]
 
     # Initialize the MovingMNIST dataset
-    moving_mnist = MovingMNIST(train, data_root, seq_len, num_digits, image_size, deterministic)
+    moving_mnist = MovingMNIST(train, data_root, seq_len, num_digits, image_size, deterministic, digit_filter=digit_filter)
 
     # Sample an item from the dataset
     sample_index = 0  # Index of the sample to visualize

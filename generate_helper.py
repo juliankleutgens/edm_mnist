@@ -239,10 +239,12 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
     }
 
     # Initialize W&B using the provided run ID
+
+        # Initialize W&B using the provided run ID (if not already initialized)
     if wandb_run_id:
         import wandb
-        wandb.init(id=wandb_run_id, resume="allow")
-
+        if not wandb.run:
+            wandb.init(id=wandb_run_id, resume="allow")
 
     #if sampler_kwargs["local_computer"]:
     device = torch.device('cpu')
@@ -312,7 +314,8 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
                 img.save(image_path)
         # Log image to W&B
             if wandb_run_id:
-                wandb.log({"Generated Image": wandb.Image(img)})
+                # save the folder with W&B of the images
+                wandb.save(image_path)
 
 
 
