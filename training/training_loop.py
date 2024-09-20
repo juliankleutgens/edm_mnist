@@ -63,7 +63,8 @@ def training_loop(
         local_computer=False,  # Use local computer
         seq_len=32,  # Sequence length for moving mnist
         num_cond_frames=0,  # Number of conditional frames for moving mnist
-        generate_images=False  # Generate images after making the snapshot
+        generate_images=False,  # Generate images after making the snapshot
+        digit_filter= None, # Filter the digits in the moving mnist dataset must be a list of integers
 ):
     if local_computer:
         device = torch.device('cpu')
@@ -120,7 +121,8 @@ def training_loop(
         # seq_len = 32
         image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
-                                  seq_len=seq_len, num_digits=2, image_size=image_size, deterministic=False)
+                                  seq_len=seq_len, num_digits=2, image_size=image_size, deterministic=False,
+                                  digit_filter=digit_filter)
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))
     dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')

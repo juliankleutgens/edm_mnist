@@ -7,7 +7,7 @@ class MovingMNIST(object):
 
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
-    def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True):
+    def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True, digit_filter=None):
         path = data_root
         self.seq_len = seq_len
         self.num_digits = num_digits
@@ -16,6 +16,7 @@ class MovingMNIST(object):
         self.digit_size = 16
         self.deterministic = deterministic
         self.seed_is_set = False # multi threaded loading
+        self.digit_filter = digit_filter
         self.channels = 1
 
         self.data = datasets.MNIST(
@@ -27,6 +28,14 @@ class MovingMNIST(object):
                  transforms.ToTensor()]) )
 
         #transform=transforms.Compose([transforms.Scale(self.digit_size),transforms.ToTensor()]))
+        if self.digit_filter is not None:
+            indices = []
+            for i in range(len(self.data)):
+                t = self.data.targets[i].item()
+                if t not in self.digit_filter:
+                    indices.append(i)
+            self.data = torch.utils.data.Subset(self.data, indices)
+
 
         self.N = len(self.data)
 

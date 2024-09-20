@@ -86,7 +86,7 @@ def parse_int_list(s):
 @click.option('--seq_len',       help='The length of the sequence',                                 type=int, default=64)
 @click.option('--num_cond_frames', help='The number of frames to condition on. One has no condition for 0, which is set by default', type=int, default=0)
 @click.option('--generate_images',help='Generate images after making the snapshot of the model',  is_flag=True)
-
+@click.option('--digit_filter',  help='The digits to filter out from the MNIST dataset',           type=parse_int_list)
 
 def main(**kwargs):
     """Train diffusion-based generative model using the techniques described in the
@@ -118,6 +118,7 @@ def main(**kwargs):
     c.seq_len = opts.seq_len
     c.num_cond_frames = opts.num_cond_frames
     c.generate_images = opts.generate_images
+    c.digit_filter = opts.digit_filter
 
     # Validate dataset options.
     try:
