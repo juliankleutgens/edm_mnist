@@ -21,7 +21,7 @@ from torch_utils import training_stats
 from torch_utils import misc
 from torch_utils.utility import *
 import wandb
-
+from generate_helper import generate_images_during_training
 
 def print_gpu_memory():
     if torch.cuda.is_available():
@@ -62,6 +62,8 @@ def training_loop(
         moving_mnist={},  # Use moving mnist dataset
         local_computer=False,  # Use local computer
         seq_len=32,  # Sequence length for moving mnist
+        num_cond_frames=0,  # Number of conditional frames for moving mnist
+        generate_images=False  # Generate images after making the snapshot
 ):
     if local_computer:
         device = torch.device('cpu')
@@ -109,25 +111,35 @@ def training_loop(
     dist.print0('Loading dataset...')
     if not mnist:
         dataset_obj = dnnlib.util.construct_class_by_name(**dataset_kwargs)  # subclass of training.dataset.Dataset
+        dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),
+                                               num_replicas=dist.get_world_size(), seed=seed)
+        dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))
     else:
         # make moving mnist dataset
         from moving_mnist import MovingMNIST
         # seq_len = 32
+        image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
-                                  seq_len=seq_len, num_digits=2, image_size=64, deterministic=False)
-    dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
-    dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))
+                                  seq_len=seq_len, num_digits=2, image_size=image_size, deterministic=False)
+        dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
+        dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))
     dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
 
     # Construct network.
     dist.print0('Constructing network...')
+    denoise_all_frames = False
+    if denoise_all_frames:
+        # if we ant to denoise all frames we simply increase the input and output channels
+        network_kwargs['img_channels'] = dataset_obj.num_channels + num_cond_frames
     interface_kwargs = dict(img_resolution=dataset_obj.resolution, img_channels=dataset_obj.num_channels,
-                            label_dim=dataset_obj.label_dim)
+                            label_dim=dataset_obj.label_dim, num_cond_frames=num_cond_frames, denoise_all_frames=denoise_all_frames)
     net = dnnlib.util.construct_class_by_name(**network_kwargs, **interface_kwargs)  # subclass of torch.nn.Module
     net.train().requires_grad_(True).to(device)
     if dist.get_rank() == 0:
         with torch.no_grad():
             images = torch.zeros([batch_gpu, net.img_channels, net.img_resolution, net.img_resolution], device=device)
+            if num_cond_frames > 0:
+                images = torch.zeros([batch_gpu, dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution], device=device)
             sigma = torch.ones([batch_gpu], device=device)
             labels = torch.zeros([batch_gpu, net.label_dim], device=device)
             misc.print_module_summary(net, [images, sigma, labels], max_nesting=2)
@@ -144,7 +156,7 @@ def training_loop(
     else:
         ddp = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device])
     ema = copy.deepcopy(net).eval().requires_grad_(False)
-    rank = dist.get_rank(),
+
 
     # Resume training from previous snapshot.
     if resume_pkl is not None:
@@ -179,7 +191,7 @@ def training_loop(
     maintenance_time = tick_start_time - start_time
     dist.update_progress(cur_nimg // 1000, total_kimg)
     stats_jsonl = None
-    jj = 0
+    i = 0
     while True:
         # Accumulate gradients.
         optimizer.zero_grad(set_to_none=True)
@@ -188,21 +200,21 @@ def training_loop(
                 images, labels = next(dataset_iterator)
                 if mnist:
                     # video: [batch_gpu, seq_len, img_h, img_w, gray_scale]
-                    images = convert_video2imges_in_batch(images)
+                    images = convert_video2images_in_batch(images)
                     # images: [batch_gpu * seq_len, img_channels, img_h, img_w]
                     if local_computer:
-                        images = images[:2, :, :, :]
+                        images = images[:4, :, :, :]
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
                 images = images.to(device).to(torch.float32) / 127.5 - 1
                 labels = labels.to(device)
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
-                if jj == 0:
+                if i == 0:
                     print("After forward pass")
                     print_gpu_memory()
-                    jj = 1
                 training_stats.report('Loss/loss', loss)
                 loss.sum().mul(loss_scaling / batch_gpu_total).backward()
-                wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg})
+                wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg, 'iteration': i})
+                i += 1
 
         # Update weights.
         for g in optimizer.param_groups:
@@ -263,10 +275,27 @@ def training_loop(
                     data[key] = value.cpu()
                 del value  # conserve memory
             if dist.get_rank() == 0:
-                snapshot_path = os.path.join(run_dir, f'network-snapshot-{cur_nimg // 1000:06d}.pkl')
-                with open(os.path.join(run_dir, f'network-snapshot-{cur_nimg // 1000:06d}.pkl'), 'wb') as f:
+                snapshot_path = os.path.join(run_dir, f'network-snapshot-{i}.pkl')
+                with open(os.path.join(run_dir, f'network-snapshot-{i}.pkl'), 'wb') as f:
                     pickle.dump(data, f)
                 wandb.save(snapshot_path)  # Log snapshot to W&B
+            if generate_images:
+                try:
+                    #torch.cuda.empty_cache()  # Clear cached memory
+                    #torch.cuda.synchronize()  # Synchronize CUDA operations
+                    generate_images_during_training( network_pkl = snapshot_path,
+                                     outdir = os.path.join(run_dir, f'generated_images_{i}'),
+                                     seeds = list(range(1, 17)),
+                                     class_idx=None,
+                                     max_batch_size=64,
+                                     device=torch.device('cuda'),
+                                     wandb_run_id=wandb.run.id,
+                                     subdirs=False,
+                                     local_computer=local_computer,
+                                     dist=dist,
+                                     )
+                except Exception as e:
+                    print(f"Error generating images: {e}")
             del data  # conserve memory
 
         # Save full dump of the training state.

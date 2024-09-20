@@ -21,3 +21,6 @@ datasets/
 /datasets/
 datasets/cifar-10-python.tar.gz
 datasets/cifar10-32x32.zip
+/out/
+/data/
+/cluster_output/

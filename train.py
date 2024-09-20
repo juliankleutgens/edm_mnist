@@ -50,7 +50,7 @@ def parse_int_list(s):
 @click.option('--precond',       help='Preconditioning & loss function', metavar='vp|ve|edm',       type=click.Choice(['vp', 've', 'edm']), default='edm', show_default=True)
 
 # Hyperparameters.
-@click.option('--duration',      help='Training duration', metavar='MIMG',                          type=click.FloatRange(min=0, min_open=True), default=200, show_default=True)
+@click.option('--duration',      help='Training duration, in kimg', metavar='MIMG',                          type=click.FloatRange(min=0, min_open=True), default=200, show_default=True)
 @click.option('--batch',         help='Total batch size', metavar='INT',                            type=click.IntRange(min=1), default=2, show_default=True)
 @click.option('--batch-gpu',     help='Limit batch size per GPU', metavar='INT',                    type=click.IntRange(min=1))
 @click.option('--cbase',         help='Channel multiplier  [default: varies]', metavar='INT',       type=int)
@@ -72,16 +72,20 @@ def parse_int_list(s):
 @click.option('--desc',          help='String to include in result dir name', metavar='STR',        type=str)
 @click.option('--nosubdir',      help='Do not create a subdirectory for results',                   is_flag=True)
 @click.option('--tick',          help='How often to print progress', metavar='KIMG',                type=click.IntRange(min=1), default=50, show_default=True)
-@click.option('--snap',          help='How often to save snapshots', metavar='TICKS',               type=click.IntRange(min=1), default=50, show_default=True)
-@click.option('--dump',          help='How often to dump state', metavar='TICKS',                   type=click.IntRange(min=1), default=500, show_default=True)
+@click.option('--snap',          help='How often to save snapshots', metavar='TICKS',               type=click.IntRange(min=1), default=10, show_default=True)
+@click.option('--dump',          help='How often to dump state', metavar='TICKS',                   type=click.IntRange(min=1), default=2, show_default=True)
 @click.option('--seed',          help='Random seed  [default: random]', metavar='INT',              type=int)
 @click.option('--transfer',      help='Transfer learning from network pickle', metavar='PKL|URL',   type=str)
 @click.option('--resume',        help='Resume from previous training state', metavar='PT',          type=str)
 @click.option('-n', '--dry-run', help='Print training options and exit',                            is_flag=True)
+
+# my added options for the moving MNIST dataset
 @click.option('--moving_mnist',  help='If one like to train on the moving MNIST dataset',           is_flag=True)
 @click.option('--moving_mnist_path',  help='The path to the MNIST dataset',                         type=str, default='./data')
 @click.option('--local_computer',  help='If you want to debug on the cpu on the local computer',    is_flag=True)
 @click.option('--seq_len',       help='The length of the sequence',                                 type=int, default=64)
+@click.option('--num_cond_frames', help='The number of frames to condition on. One has no condition for 0, which is set by default', type=int, default=0)
+@click.option('--generate_images',help='Generate images after making the snapshot of the model',  is_flag=True)
 
 
 def main(**kwargs):
@@ -112,6 +116,8 @@ def main(**kwargs):
     c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path)
     c.local_computer = opts.local_computer
     c.seq_len = opts.seq_len
+    c.num_cond_frames = opts.num_cond_frames
+    c.generate_images = opts.generate_images
 
     # Validate dataset options.
     try:
@@ -131,8 +137,8 @@ def main(**kwargs):
 
     # Network architecture.
     if opts.arch == 'ddpmpp':
-        c.network_kwargs.update(model_type='SongUNet', embedding_type='positional', encoder_type='standard', decoder_type='standard')
-        c.network_kwargs.update(channel_mult_noise=1, resample_filter=[1,1], model_channels=128, channel_mult=[2,2,2])
+        c.network_kwargs.update(model_type='SongUNet', embedding_type='positional', encoder_type='standard', decoder_type='standard', num_blocks=2)
+        c.network_kwargs.update(channel_mult_noise=1, resample_filter=[1,1], model_channels=32, channel_mult=[1,1,2])
     elif opts.arch == 'ncsnpp':
         c.network_kwargs.update(model_type='SongUNet', embedding_type='fourier', encoder_type='residual', decoder_type='standard')
         c.network_kwargs.update(channel_mult_noise=2, resample_filter=[1,3,3,1], model_channels=128, channel_mult=[2,2,2])
@@ -164,12 +170,14 @@ def main(**kwargs):
     c.network_kwargs.update(dropout=opts.dropout, use_fp16=opts.fp16)
 
     # Training options.
-    c.total_kimg = max(int(opts.duration * 1000), 1)
-    #c.total_kimg = 0.004
+    c.total_kimg = max(int(opts.duration), 1)
     c.ema_halflife_kimg = int(opts.ema * 1000)
     c.update(batch_size=opts.batch, batch_gpu=opts.batch_gpu)
     c.update(loss_scaling=opts.ls, cudnn_benchmark=opts.bench)
-    c.update(kimg_per_tick=opts.tick, snapshot_ticks=opts.snap, state_dump_ticks=opts.dump)
+    tick_interval = max(int(c.total_kimg // opts.tick), 1)
+    snap_interval = max(int(c.total_kimg // opts.snap), 1)
+    dump_interval = max(int(c.total_kimg // opts.dump), 1)
+    c.update(kimg_per_tick=tick_interval, snapshot_ticks=snap_interval, state_dump_ticks=dump_interval)
 
     # Random seed.
     if opts.seed is not None:
@@ -199,6 +207,8 @@ def main(**kwargs):
     # Description string.
     cond_str = 'cond' if c.dataset_kwargs.use_labels else 'uncond'
     dtype_str = 'fp16' if c.network_kwargs.use_fp16 else 'fp32'
+    if c.moving_mnist.moving_mnist:
+        dataset_name = 'moving_mnist'
     desc = f'{dataset_name:s}-{cond_str:s}-{opts.arch:s}-{opts.precond:s}-gpus{dist.get_world_size():d}-batch{c.batch_size:d}-{dtype_str:s}'
     if opts.desc is not None:
         desc += f'-{opts.desc}'

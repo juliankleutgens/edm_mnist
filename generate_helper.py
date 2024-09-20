@@ -212,56 +212,42 @@ def parse_int_list(s):
     return ranges
 
 #----------------------------------------------------------------------------
-
-@click.command()
-@click.option('--network', 'network_pkl',  help='Network pickle filename', metavar='PATH|URL',                      type=str, required=True)
-@click.option('--outdir',                  help='Where to save the output images', metavar='DIR',                   type=str, required=True)
-@click.option('--seeds',                   help='Random seeds (e.g. 1,2,5-10)', metavar='LIST',                     type=parse_int_list, default='0-63', show_default=True)
-@click.option('--subdirs',                 help='Create subdirectory for every 1000 seeds',                         is_flag=True)
-@click.option('--class', 'class_idx',      help='Class label  [default: random]', metavar='INT',                    type=click.IntRange(min=0), default=None)
-@click.option('--batch', 'max_batch_size', help='Maximum batch size', metavar='INT',                                type=click.IntRange(min=1), default=64, show_default=True)
-
-@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=18, show_default=True)
-@click.option('--sigma_min',               help='Lowest noise level  [default: varies]', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True))
-@click.option('--sigma_max',               help='Highest noise level  [default: varies]', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True))
-@click.option('--rho',                     help='Time step exponent', metavar='FLOAT',                              type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
-@click.option('--S_churn', 'S_churn',      help='Stochasticity strength', metavar='FLOAT',                          type=click.FloatRange(min=0), default=0, show_default=True)
-@click.option('--S_min', 'S_min',          help='Stoch. min noise level', metavar='FLOAT',                          type=click.FloatRange(min=0), default=0, show_default=True)
-@click.option('--S_max', 'S_max',          help='Stoch. max noise level', metavar='FLOAT',                          type=click.FloatRange(min=0), default='inf', show_default=True)
-@click.option('--S_noise', 'S_noise',      help='Stoch. noise inflation', metavar='FLOAT',                          type=float, default=1, show_default=True)
-
-@click.option('--solver',                  help='Ablate ODE solver', metavar='euler|heun',                          type=click.Choice(['euler', 'heun']))
-@click.option('--disc', 'discretization',  help='Ablate time step discretization {t_i}', metavar='vp|ve|iddpm|edm', type=click.Choice(['vp', 've', 'iddpm', 'edm']))
-@click.option('--schedule',                help='Ablate noise schedule sigma(t)', metavar='vp|ve|linear',           type=click.Choice(['vp', 've', 'linear']))
-@click.option('--scaling',                 help='Ablate signal scaling s(t)', metavar='vp|none',                    type=click.Choice(['vp', 'none']))
-
-@click.option('--local_computer',        help='Use local computer',                                              is_flag=True)
-@click.option('--wandb_run_id',          help='W&B run ID',                                                      type=str, default=None)
-
-def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), **sampler_kwargs):
+def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), local_computer=False,dist=None):
     """Generate random images using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
-
-    Examples:
-
-    \b
-    # Generate 64 images and save them as out/*.png
-    python generate.py --outdir=out --seeds=0-63 --batch=64 \\
-        --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
-
-    \b
-    # Generate 1024 images using 2 GPUs
-    torchrun --standalone --nproc_per_node=2 generate.py --outdir=out --seeds=0-999 --batch=64 \\
-        --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
     """
+    sampler_kwargs = {
+#        "seeds": seeds,  # Adjust seeds as needed
+#        "max_batch_size": max_batch_size,
+#        "class_idx": class_idx,
+        "num_steps": 18,
+        "sigma_min": None,  # Use default value
+        "sigma_max": None,  # Use default value
+        "rho": 7,
+        "S_churn": 0,
+        "S_min": 0,
+        "S_max": float('inf'),
+        "S_noise": 1,
+        "solver": None,  # Optional
+        "discretization": None,  # Optional
+        "schedule": None,  # Optional
+        "scaling": None,  # Optional
+#        "subdirs": outdir,
+        "local_computer": local_computer,
+#        "wandb_run_id":  wandb_run_id # Replace with actual W&B run ID if needed
+    }
+
     # Initialize W&B using the provided run ID
     if wandb_run_id:
         import wandb
         wandb.init(id=wandb_run_id, resume="allow")
+
+
     if sampler_kwargs["local_computer"]:
         device = torch.device('cpu')
 
-    dist.init()
+
+    #dist.init()
     num_batches = ((len(seeds) - 1) // (max_batch_size * dist.get_world_size()) + 1) * dist.get_world_size()
     all_batches = torch.as_tensor(seeds).tensor_split(num_batches)
     rank_batches = all_batches[dist.get_rank() :: dist.get_world_size()]
@@ -320,17 +306,10 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
                 wandb.log({"Generated Image": wandb.Image(img)})
 
 
-    # Finish W&B run
-    if wandb_run_id:
-        wandb.finish()
 
     # Done.
     torch.distributed.barrier()
     dist.print0('Done.')
 
-#----------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    main()
 
 #----------------------------------------------------------------------------

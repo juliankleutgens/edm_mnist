@@ -4,19 +4,19 @@ import torch
 from torchvision import datasets, transforms
 
 class MovingMNIST(object):
-    
+
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
     def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True):
         path = data_root
         self.seq_len = seq_len
-        self.num_digits = num_digits  
-        self.image_size = image_size 
+        self.num_digits = num_digits
+        self.image_size = image_size
         self.step_length = 0.1
-        self.digit_size = 32
+        self.digit_size = 16
         self.deterministic = deterministic
         self.seed_is_set = False # multi threaded loading
-        self.channels = 1 
+        self.channels = 1
 
         self.data = datasets.MNIST(
             path,
@@ -28,13 +28,13 @@ class MovingMNIST(object):
 
         #transform=transforms.Compose([transforms.Scale(self.digit_size),transforms.ToTensor()]))
 
-        self.N = len(self.data) 
+        self.N = len(self.data)
 
     def set_seed(self, seed):
         if not self.seed_is_set:
             self.seed_is_set = True
             np.random.seed(seed)
-          
+
     def __len__(self):
         return self.N
 
@@ -43,8 +43,8 @@ class MovingMNIST(object):
         image_size = self.image_size
         digit_size = self.digit_size
         x = np.zeros((self.seq_len,
-                      image_size, 
-                      image_size, 
+                      image_size,
+                      image_size,
                       self.channels),
                     dtype=np.float32)
         for n in range(self.num_digits):
@@ -57,36 +57,36 @@ class MovingMNIST(object):
             dy = np.random.randint(-4, 5)
             for t in range(self.seq_len):
                 if sy < 0:
-                    sy = 0 
+                    sy = 0
                     if self.deterministic:
                         dy = -dy
                     else:
                         dy = np.random.randint(1, 5)
                         dx = np.random.randint(-4, 5)
-                elif sy >= image_size-32:
-                    sy = image_size-32-1
+                elif sy >= image_size-self.digit_size:
+                    sy = image_size-self.digit_size-1
                     if self.deterministic:
                         dy = -dy
                     else:
                         dy = np.random.randint(-4, 0)
                         dx = np.random.randint(-4, 5)
-                    
+
                 if sx < 0:
-                    sx = 0 
+                    sx = 0
                     if self.deterministic:
                         dx = -dx
                     else:
                         dx = np.random.randint(1, 5)
                         dy = np.random.randint(-4, 5)
-                elif sx >= image_size-32:
-                    sx = image_size-32-1
+                elif sx >= image_size-self.digit_size:
+                    sx = image_size-self.digit_size-1
                     if self.deterministic:
                         dx = -dx
                     else:
                         dx = np.random.randint(-4, 0)
                         dy = np.random.randint(-4, 5)
-                   
-                x[t, sy:sy+32, sx:sx+32, 0] += digit.numpy().squeeze()
+
+                x[t, sy:sy+digit_size, sx:sx+digit_size, 0] += digit.numpy().squeeze()
                 sy += dy
                 sx += dx
 
@@ -141,7 +141,7 @@ def main():
     data_root = './data'  # The directory where the MNIST data will be downloaded
     seq_len = 64  # Length of the sequence
     num_digits = 2  # Number of digits to display in each sequence
-    image_size = 64  # Size of the image frame
+    image_size = 32  # Size of the image frame
     deterministic = True  # Whether the movement should be deterministic
 
     # Initialize the MovingMNIST dataset

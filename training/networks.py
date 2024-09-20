@@ -234,11 +234,12 @@ class SongUNet(torch.nn.Module):
         img_resolution,                     # Image resolution at input/output.
         in_channels,                        # Number of color channels at input.
         out_channels,                       # Number of color channels at output.
+        num_cond_frames    = 0,            # Number of conditional frames, 0 = unconditional.
         label_dim           = 0,            # Number of class labels, 0 = unconditional.
         augment_dim         = 0,            # Augmentation label dimensionality, 0 = no augmentation.
 
-        model_channels      = 128,          # Base multiplier for the number of channels.
-        channel_mult        = [1,2,2,2],    # Per-resolution multipliers for the number of channels.
+        model_channels      = 128,          # Base multiplier for the number of channels. Hyperparameter for the model!
+        channel_mult        = [1,2,2,2],    # Per-resolution multipliers for the number of channels. Hyperparameter for the model!
         channel_mult_emb    = 4,            # Multiplier for the dimensionality of the embedding vector.
         num_blocks          = 4,            # Number of residual blocks per resolution.
         attn_resolutions    = [16],         # List of resolutions with self-attention.
@@ -250,12 +251,16 @@ class SongUNet(torch.nn.Module):
         encoder_type        = 'standard',   # Encoder architecture: 'standard' for DDPM++, 'residual' for NCSN++.
         decoder_type        = 'standard',   # Decoder architecture: 'standard' for both DDPM++ and NCSN++.
         resample_filter     = [1,1],        # Resampling filter: [1,1] for DDPM++, [1,3,3,1] for NCSN++.
+        denoise_all_frames  = True,        # Denoise all frames in the input sequence?
     ):
         assert embedding_type in ['fourier', 'positional']
         assert encoder_type in ['standard', 'skip', 'residual']
         assert decoder_type in ['standard', 'skip']
 
         super().__init__()
+        self.num_cond_frames = num_cond_frames
+        if not denoise_all_frames:
+            in_channels += num_cond_frames
         self.label_dropout = label_dropout
         emb_channels = model_channels * channel_mult_emb
         noise_channels = model_channels * channel_mult_noise
@@ -377,6 +382,7 @@ class DhariwalUNet(torch.nn.Module):
         img_resolution,                     # Image resolution at input/output.
         in_channels,                        # Number of color channels at input.
         out_channels,                       # Number of color channels at output.
+        numb_cond_frames    = 0,            # Number of conditional frames, 0 = unconditional.
         label_dim           = 0,            # Number of class labels, 0 = unconditional.
         augment_dim         = 0,            # Augmentation label dimensionality, 0 = no augmentation.
 
@@ -389,6 +395,9 @@ class DhariwalUNet(torch.nn.Module):
         label_dropout       = 0,            # Dropout probability of class labels for classifier-free guidance.
     ):
         super().__init__()
+        # update the number of channels in the model
+        in_channels += numb_cond_frames
+
         self.label_dropout = label_dropout
         emb_channels = model_channels * channel_mult_emb
         init = dict(init_mode='kaiming_uniform', init_weight=np.sqrt(1/3), init_bias=np.sqrt(1/3))
@@ -642,6 +651,7 @@ class EDMPrecond(torch.nn.Module):
         sigma_max       = float('inf'),     # Maximum supported noise level.
         sigma_data      = 0.5,              # Expected standard deviation of the training data.
         model_type      = 'DhariwalUNet',   # Class name of the underlying model.
+        num_cond_frames = 0,                # Number of conditional frames, 0 = unconditional.
         **model_kwargs,                     # Keyword arguments for the underlying model.
     ):
         super().__init__()
@@ -652,7 +662,7 @@ class EDMPrecond(torch.nn.Module):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.sigma_data = sigma_data
-        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
+        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels, out_channels=img_channels, label_dim=label_dim,num_cond_frames=num_cond_frames, **model_kwargs)
 
     def forward(self, x, sigma, class_labels=None, force_fp32=False, **model_kwargs):
         x = x.to(torch.float32)
@@ -660,6 +670,7 @@ class EDMPrecond(torch.nn.Module):
         class_labels = None if self.label_dim == 0 else torch.zeros([1, self.label_dim], device=x.device) if class_labels is None else class_labels.to(torch.float32).reshape(-1, self.label_dim)
         dtype = torch.float16 if (self.use_fp16 and not force_fp32 and x.device.type == 'cuda') else torch.float32
 
+        # normalizing the noise level
         c_skip = self.sigma_data ** 2 / (sigma ** 2 + self.sigma_data ** 2)
         c_out = sigma * self.sigma_data / (sigma ** 2 + self.sigma_data ** 2).sqrt()
         c_in = 1 / (self.sigma_data ** 2 + sigma ** 2).sqrt()
