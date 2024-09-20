@@ -23,6 +23,26 @@ from torch_utils.utility import *
 import wandb
 from generate_helper import generate_images_during_training
 from torchsummary import summary
+import matplotlib.pyplot as plt
+
+
+def plot_images_fixed(images_batch):
+    """
+    This function will take a batch of images and plot them.
+    The input is expected to be of shape [batch_size, img_channels, img_h, img_w].
+    If the images are grayscale, it assumes a single channel.
+    """
+    batch_size = images_batch.shape[0]
+
+    # Plot each image in the batch
+    fig, axes = plt.subplots(1, min(batch_size, 5), figsize=(15, 5))
+
+    for i, ax in enumerate(axes):
+        img = images_batch[i].squeeze()  # remove channel dimension if it's grayscale
+        ax.imshow(img, cmap='gray')  # Grayscale case
+        ax.axis('off')
+
+    plt.show()
 
 def print_gpu_memory():
     if torch.cuda.is_available():
@@ -137,7 +157,7 @@ def training_loop(
         # seq_len = 32
         image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
-                                  seq_len=seq_len, num_digits=2, image_size=image_size, deterministic=False,
+                                  seq_len=seq_len, num_digits=1, image_size=image_size, deterministic=False,
                                   digit_filter=digit_filter)
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))

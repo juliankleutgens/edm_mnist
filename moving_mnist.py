@@ -13,7 +13,7 @@ class MovingMNIST(object):
         self.num_digits = num_digits
         self.image_size = image_size
         self.step_length = 0.1
-        self.digit_size = 16
+        self.digit_size = 24
         self.deterministic = deterministic
         self.seed_is_set = False # multi threaded loading
         self.digit_filter = digit_filter
