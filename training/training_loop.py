@@ -85,8 +85,6 @@ def training_loop(
         'loss_scaling': loss_scaling,
         'kimg_per_tick': kimg_per_tick
     })
-    print("Initial GPU memory state:")
-    print_gpu_memory()
 
     # Initialize.
     start_time = time.time()
@@ -184,8 +182,6 @@ def training_loop(
     # Train.
     dist.print0(f'Training for {total_kimg} kimg...')
     dist.print0()
-    print("Before forward pass and After loading dataset")
-    print_gpu_memory()
     cur_nimg = resume_kimg * 1000
     cur_tick = 0
     tick_start_nimg = cur_nimg
@@ -210,9 +206,6 @@ def training_loop(
                 images = images.to(device).to(torch.float32) / 127.5 - 1
                 labels = labels.to(device)
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
-                if i == 0:
-                    print("After forward pass")
-                    print_gpu_memory()
                 training_stats.report('Loss/loss', loss)
                 loss.sum().mul(loss_scaling / batch_gpu_total).backward()
                 wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg, 'iteration': i})
@@ -269,6 +262,7 @@ def training_loop(
 
         # Save network snapshot.
         if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0):
+            print(f"Saving snapshot at tick {cur_tick} and iteration {i}")
             data = dict(ema=ema, loss_fn=loss_fn, augment_pipe=augment_pipe, dataset_kwargs=dict(dataset_kwargs))
             for key, value in data.items():
                 if isinstance(value, torch.nn.Module):
@@ -280,11 +274,14 @@ def training_loop(
                 snapshot_path = os.path.join(run_dir, f'network-snapshot-{i}.pkl')
                 with open(os.path.join(run_dir, f'network-snapshot-{i}.pkl'), 'wb') as f:
                     pickle.dump(data, f)
+                print(f"Snapshot saved at {snapshot_path}")
                 wandb.save(snapshot_path)  # Log snapshot to W&B
             if generate_images:
                 try:
                     #torch.cuda.empty_cache()  # Clear cached memory
                     #torch.cuda.synchronize()  # Synchronize CUDA operations
+                    t = time.time()
+                    print(f"Generating images at tick {cur_tick} and iteration {i}")
                     generate_images_during_training( network_pkl = snapshot_path,
                                      outdir = os.path.join(run_dir, f'generated_images_{i}'),
                                      seeds = list(range(1, 17)),
@@ -296,6 +293,7 @@ def training_loop(
                                      local_computer=local_computer,
                                      dist=dist,
                                      )
+                    print(f"Generated images in {time.time() - t:.2f} seconds")
                 except Exception as e:
                     print(f"Error generating images: {e}")
             del data  # conserve memory
