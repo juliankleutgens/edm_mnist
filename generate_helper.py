@@ -262,6 +262,7 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
         with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
             net = pickle.load(f)['ema'].to(device)
     else: # Use the provided network
+        dist.print0(f'Using provided network...')
         net = net.to(device)
 
 
