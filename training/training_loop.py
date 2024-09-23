@@ -115,13 +115,30 @@ def training_loop(
         batch_size = batch_size * seq_len
 
     # Initialize W&B
+    # Initialize W&B
     wandb.init(project="diffusion-model-training", config={
         'batch_size': batch_size,
         'total_kimg': total_kimg,
         'ema_halflife_kimg': ema_halflife_kimg,
         'lr_rampup_kimg': lr_rampup_kimg,
         'loss_scaling': loss_scaling,
-        'kimg_per_tick': kimg_per_tick
+        'kimg_per_tick': kimg_per_tick,
+        # Add network-specific parameters
+        'num_blocks': network_kwargs.get('num_blocks', None),
+        'channel_mult_noise': network_kwargs.get('channel_mult_noise', None),
+        'resample_filter': network_kwargs.get('resample_filter', None),
+        'model_channels': network_kwargs.get('model_channels', None),
+        'channel_mult': network_kwargs.get('channel_mult', None),
+        # Add dataset-specific parameters
+        'num_cond_frames': num_cond_frames,
+        'digit_filter': digit_filter,
+        'seq_len': seq_len,
+        # Add augmentation parameters
+        'augment': augment_kwargs.get('p', None) if augment_kwargs else None,
+        'dropout': network_kwargs.get('dropout', None),
+        # More training-specific parameters
+        'fp16': network_kwargs.get('use_fp16', False),
+        'local_computer': local_computer,
     })
 
     # Initialize.
@@ -183,6 +200,11 @@ def training_loop(
             wrapped_model = ModelWrapper(net, sigma_value=1.0)  # Set the sigma value
             # Run summary with the input size (1 channels, 32x32)
             summary(wrapped_model, input_size=(dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution))
+            # Calculate the total number of parameters
+            total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+
+            # Log the total number of parameters to WandB
+            wandb.config.update({'total_params': total_params}, allow_val_change=True)
 
     # Setup optimizer.
     dist.print0('Setting up optimizer...')

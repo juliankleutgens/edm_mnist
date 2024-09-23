@@ -19,6 +19,7 @@ import PIL.Image
 from copy import deepcopy
 import dnnlib
 from torch_utils import distributed as dist
+import matplotlib.pyplot as plt
 
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
@@ -26,11 +27,12 @@ from torch_utils import distributed as dist
 def edm_sampler(
     net, latents, class_labels=None, randn_like=torch.randn_like,
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
-    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False, plot_diffusion=False
 ):
     # Adjust noise levels based on what's supported by the network.
     sigma_min = max(sigma_min, net.sigma_min)
     sigma_max = min(sigma_max, net.sigma_max)
+    intermediate_images = []
 
     # Time step discretization.
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
@@ -58,7 +60,27 @@ def edm_sampler(
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
-    return x_next
+        # Save intermediate images.
+        # Convert x_next to an image and store it
+        if plot_diffusion:
+            intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+    return x_next, intermediate_images
+
+def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, save_path=None):
+    if num_rows * num_cols < len(intermediate_images):
+        num_rows = (len(intermediate_images) + num_cols - 1) // num_cols
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
+    for i, ax in enumerate(axes.flatten()):
+        if i < len(intermediate_images):
+            ax.imshow(intermediate_images[i], cmap='gray')
+            ax.set_title(f'Step {i + 1}')
+        ax.axis('off')
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+    else:
+        plt.show()
+    plt.close()
 
 #----------------------------------------------------------------------------
 # Generalized ablation sampler, representing the superset of all sampling
@@ -213,7 +235,7 @@ def parse_int_list(s):
     return ranges
 
 #----------------------------------------------------------------------------
-def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), local_computer=False, dist=None, net=None):
+def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, wandb_run_id=None, device=torch.device('cuda'), local_computer=False, dist=None, net=None, class_idx=None, subdirs=False):
     """Generate random images using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
     """
@@ -298,7 +320,8 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
         sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
-        images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, **sampler_kwargs)
+        plot_diffusion = True
+        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, plot_diffusion=plot_diffusion , **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
@@ -309,14 +332,25 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
             image_path = os.path.join(image_dir, f'{seed:06d}.png')
             if image_np.shape[2] == 1:
                 img = PIL.Image.fromarray(image_np[:, :, 0], 'L')
+                plt.imshow(image_np[:, :, 0], cmap='gray')
                 img.save(image_path)
             else:
                 img = PIL.Image.fromarray(image_np, 'RGB')
                 img.save(image_path)
-        # Log image to W&B
-                # Create W&B Image object
-            wandb_image = wandb.Image(img, caption=f"Seed: {seed}")
-            wandb_images.append(wandb_image)
+            plt.axis('off')
+            # Save the figure as displayed by Matplotlib
+            image_path_plt = image_path.replace('.png', '_plt.png')
+
+
+            plt.savefig(image_path_plt, bbox_inches='tight', pad_inches=0)
+            plt.close()
+
+            image_path_steps = image_path.replace('.png', '_steps.png')
+            plot_diffusion_process(intermediate_images, save_path=image_path_steps)
+            if wandb.run is not None:
+                wandb_image = wandb.Image(image_path_steps, caption=f"Seed: {seed}")
+                wandb_images.append(wandb_image)
+
 
             # Log all images to W&B
         if wandb.run is not None:
@@ -330,3 +364,17 @@ def generate_images_during_training(network_pkl, outdir, wandb_run_id, subdirs, 
 
 
 #----------------------------------------------------------------------------
+if __name__ == "__main__":
+    outdir = "out/"
+    batch = 1
+    network = "/Users/juliankleutgens/PycharmProjects/edm-main/cluster_output/00115-8xT4/network-snapshot-002502.pkl"
+    local_computer = True
+    steps = 18
+    seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    sigma_min = 0.002
+    sigma_max = 80
+    S_noise = 1
+    max_batch_size = 1
+    dist.init()
+    generate_images_during_training(network_pkl=network, outdir=outdir, seeds=seeds, local_computer=local_computer, device=torch.device('cpu'), dist=dist, max_batch_size=max_batch_size)
+    print("Done.")

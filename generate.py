@@ -18,6 +18,8 @@ import torch
 import PIL.Image
 import dnnlib
 from torch_utils import distributed as dist
+import matplotlib.pyplot as plt
+
 
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
@@ -25,7 +27,8 @@ from torch_utils import distributed as dist
 def edm_sampler(
     net, latents, class_labels=None, randn_like=torch.randn_like,
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
-    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False,
+    plot_diffusion=False,
 ):
     # Adjust noise levels based on what's supported by the network.
     sigma_min = max(sigma_min, net.sigma_min)
@@ -35,6 +38,7 @@ def edm_sampler(
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+    intermediate_images = []
 
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0]
@@ -57,7 +61,26 @@ def edm_sampler(
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
-    return x_next
+        # Save intermediate images.
+        # Convert x_next to an image and store it
+        if plot_diffusion:
+            intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+    return x_next, intermediate_images
+
+
+# Function to plot the intermediate images
+def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5):
+    if num_rows * num_cols < len(intermediate_images):
+        num_rows = (len(intermediate_images) + num_cols - 1) // num_cols
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
+    for i, ax in enumerate(axes.flatten()):
+        if i < len(intermediate_images):
+            ax.imshow(intermediate_images[i], cmap='gray')
+            ax.set_title(f'Step {i + 1}')
+        ax.axis('off')
+    plt.show()
+
 
 #----------------------------------------------------------------------------
 # Generalized ablation sampler, representing the superset of all sampling
@@ -221,7 +244,7 @@ def parse_int_list(s):
 @click.option('--class', 'class_idx',      help='Class label  [default: random]', metavar='INT',                    type=click.IntRange(min=0), default=None)
 @click.option('--batch', 'max_batch_size', help='Maximum batch size', metavar='INT',                                type=click.IntRange(min=1), default=64, show_default=True)
 
-@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=18, show_default=True)
+@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=10, show_default=True)
 @click.option('--sigma_min',               help='Lowest noise level  [default: varies]', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True))
 @click.option('--sigma_max',               help='Highest noise level  [default: varies]', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True))
 @click.option('--rho',                     help='Time step exponent', metavar='FLOAT',                              type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
@@ -281,6 +304,8 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
 
     # Loop over batches.
     dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
+    i = 0
+    plot_diffusion = True
     for batch_seeds in tqdm.tqdm(rank_batches, unit='batch', disable=(dist.get_rank() != 0)):
         torch.distributed.barrier()
         batch_size = len(batch_seeds)
@@ -301,7 +326,10 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
         sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
-        images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, **sampler_kwargs)
+        if i == 1:
+            plot_diffusion = False
+        #i += 1
+        images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
@@ -311,12 +339,19 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
             image_path = os.path.join(image_dir, f'{seed:06d}.png')
             if image_np.shape[2] == 1:
                 img = PIL.Image.fromarray(image_np[:, :, 0], 'L')
+                plt.imshow(image_np[:, :, 0], cmap='gray')
                 img.save(image_path)
             else:
                 img = PIL.Image.fromarray(image_np, 'RGB')
                 img.save(image_path)
+            #plt.show()
+            plt.axis('off')
+            # Save the figure as displayed by Matplotlib
+            image_path_plt = image_path.replace('.png', '_plt.png')
+            plt.savefig(image_path_plt, bbox_inches='tight', pad_inches=0)
+            plt.close()
         # Log image to W&B
-            if wandb_run_id:
+            if not wandb_run_id == None:
                 wandb.log({"Generated Image": wandb.Image(img)})
 
 
