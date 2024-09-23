@@ -355,7 +355,8 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
             # Log all images to W&B
         if wandb.run is not None:
             wandb.log({"generated_images": wandb_images})
-
+            print(f'Logged {len(wandb_images)} images to W&B')
+            print(f'The W&B run URL is: {wandb.run.get_url()}')
 
 
     # Done.
