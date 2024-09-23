@@ -132,15 +132,17 @@ def main(**kwargs):
     try:
         # Get the current working directory
         current_path = os.getcwd()
-        c.dataset_kwargs['path'] = os.path.join(current_path, c.dataset_kwargs['path'])
+        if not opts.moving_mnist:
+            c.dataset_kwargs['path'] = os.path.join(current_path, c.dataset_kwargs['path'])
 
-        dataset_obj = dnnlib.util.construct_class_by_name(**c.dataset_kwargs)
-        dataset_name = dataset_obj.name
-        c.dataset_kwargs.resolution = dataset_obj.resolution # be explicit about dataset resolution
-        c.dataset_kwargs.max_size = len(dataset_obj) # be explicit about dataset size
-        if opts.cond and not dataset_obj.has_labels:
-            raise click.ClickException('--cond=True requires labels specified in dataset.json')
-        del dataset_obj # conserve memory
+
+            dataset_obj = dnnlib.util.construct_class_by_name(**c.dataset_kwargs)
+            dataset_name = dataset_obj.name
+            c.dataset_kwargs.resolution = dataset_obj.resolution # be explicit about dataset resolution
+            c.dataset_kwargs.max_size = len(dataset_obj) # be explicit about dataset size
+            if opts.cond and not dataset_obj.has_labels:
+                raise click.ClickException('--cond=True requires labels specified in dataset.json')
+            del dataset_obj # conserve memory
     except IOError as err:
         raise click.ClickException(f'--data: {err}')
 
