@@ -25,3 +25,7 @@ datasets/cifar10-32x32.zip
 /data/
 /cluster_output/
 /dataset/
+# Add to your .gitignore to ignore large dataset files
+dataset/
+*.tar.gz
+*.zip
