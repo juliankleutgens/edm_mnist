@@ -175,10 +175,10 @@ def training_loop(
         image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
                                   seq_len=seq_len, num_digits=1, image_size=image_size, deterministic=False,
-                                  digit_filter=digit_filter)
+                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False))
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))
-    dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
+        dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
 
     # Construct network.
     dist.print0('Constructing network...')
@@ -192,9 +192,7 @@ def training_loop(
     net.train().requires_grad_(True).to(device)
     if dist.get_rank() == 0:
         with torch.no_grad():
-            images = torch.zeros([batch_gpu, net.img_channels, net.img_resolution, net.img_resolution], device=device)
-            if num_cond_frames > 0:
-                images = torch.zeros([batch_gpu, dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution], device=device)
+            images = torch.zeros([batch_gpu, dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution], device=device)
             sigma = torch.ones([batch_gpu], device=device)
             labels = torch.zeros([batch_gpu, net.label_dim], device=device)
             wrapped_model = ModelWrapper(net, sigma_value=1.0)  # Set the sigma value
@@ -260,10 +258,11 @@ def training_loop(
                 images, labels = next(dataset_iterator)
                 if mnist:
                     # video: [batch_gpu, seq_len, img_h, img_w, gray_scale]
-                    images = convert_video2images_in_batch(images)
+                    images, labels = convert_video2images_in_batch(images, labels)
                     # images: [batch_gpu * seq_len, img_channels, img_h, img_w]
-                    if local_computer:
-                        images = images[:4, :, :, :]
+                if local_computer:
+                    images = images[:4, :, :, :]
+                    labels = labels[:4]
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
                 images = images.to(device).to(torch.float32) / 127.5 - 1
                 labels = labels.to(device)

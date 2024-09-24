@@ -684,4 +684,12 @@ class EDMPrecond(torch.nn.Module):
     def round_sigma(self, sigma):
         return torch.as_tensor(sigma)
 
+
+# plot function
+def plot_image_first_of_batch(image, title):
+    from matplotlib import pyplot as plt
+    plt.imshow(image[0].permute(1, 2, 0).cpu().detach().numpy())
+    plt.title(title)
+    plt.show()
+    plt.close()
 #----------------------------------------------------------------------------

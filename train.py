@@ -121,7 +121,7 @@ def main(**kwargs):
     c.network_kwargs = dnnlib.EasyDict()
     c.loss_kwargs = dnnlib.EasyDict()
     c.optimizer_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=opts.lr, betas=[0.9,0.999], eps=1e-8)
-    c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path)
+    c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path, use_labels=opts.cond)
     c.local_computer = opts.local_computer
     c.seq_len = opts.seq_len
     c.num_cond_frames = opts.num_cond_frames
@@ -134,8 +134,6 @@ def main(**kwargs):
         current_path = os.getcwd()
         if not opts.moving_mnist:
             c.dataset_kwargs['path'] = os.path.join(current_path, c.dataset_kwargs['path'])
-
-
             dataset_obj = dnnlib.util.construct_class_by_name(**c.dataset_kwargs)
             dataset_name = dataset_obj.name
             c.dataset_kwargs.resolution = dataset_obj.resolution # be explicit about dataset resolution

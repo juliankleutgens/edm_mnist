@@ -20,7 +20,33 @@ import dnnlib
 from torch_utils import distributed as dist
 import matplotlib.pyplot as plt
 
+def plot_curve_of_t_steps(sigma_min, sigma_max, rho, num_steps, net, latents):
+    # Time step discretization.
+    step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
+    t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+    t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
 
+    # plot t steps
+    plt.plot(t_steps.cpu().numpy())
+    plt.xlabel('Step')
+    plt.ylabel('t step')
+    plt.title('Time step discretization')
+    # highest noise level is sigma_max
+    plt.axhline(y=sigma_max, color='r', linestyle='--', label=f'sigma_max {sigma_max}')
+    # lowest noise level is sigma_min
+    plt.axhline(y=sigma_min, color='g', linestyle='--', label=f'sigma_min {sigma_min}')
+    plt.legend()
+    plt.show()
+    plt.close()
+
+def plot_gamma(gamma_arr, S_churn):
+    # plot gamma values
+    plt.plot(gamma_arr)
+    plt.xlabel('Step')
+    plt.ylabel('Gamma')
+    plt.title(f'Gamma values with S_churn {S_churn}')
+    plt.show()
+    plt.close()
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
 
@@ -39,16 +65,24 @@ def edm_sampler(
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
     intermediate_images = []
+    intermediate_denoised = []
+    intermediate_denoised_prime = []
+    intermediate_direction_cur = []
+
+
 
     # Main sampling loop.
-    x_next = latents.to(torch.float64) * t_steps[0]
+    x_next = latents.to(torch.float64) * t_steps[0] * 0.1
+    gamma_arr = []
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         x_cur = x_next
 
         # Increase noise temporarily.
         gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
+        gamma_arr.append(gamma)
         t_hat = net.round_sigma(t_cur + gamma * t_cur)
         x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+        # if S_churn is 0, gamma is 0, t_hat is equal to t_cur, x_hat is equal to x_cur
 
         # Euler step.
         denoised = net(x_hat, t_hat, class_labels).to(torch.float64)
@@ -66,11 +100,28 @@ def edm_sampler(
         if plot_diffusion:
             intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+
+            denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
+
+            direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
+
+            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
+
+
+    if plot_diffusion:
+        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
+        #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
+        plot_diffusion_process(intermediate_images, variable_name='Image')
+        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
+    #plot_gamma(gamma_arr, S_churn)
     return x_next, intermediate_images
 
 
 # Function to plot the intermediate images
-def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5):
+def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, variable_name='Image'):
     if num_rows * num_cols < len(intermediate_images):
         num_rows = (len(intermediate_images) + num_cols - 1) // num_cols
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
@@ -79,6 +130,8 @@ def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5):
             ax.imshow(intermediate_images[i], cmap='gray')
             ax.set_title(f'Step {i + 1}')
         ax.axis('off')
+    title = 'Diffusion process: ' + variable_name
+    plt.suptitle(title)
     plt.show()
 
 
@@ -244,7 +297,7 @@ def parse_int_list(s):
 @click.option('--class', 'class_idx',      help='Class label  [default: random]', metavar='INT',                    type=click.IntRange(min=0), default=None)
 @click.option('--batch', 'max_batch_size', help='Maximum batch size', metavar='INT',                                type=click.IntRange(min=1), default=64, show_default=True)
 
-@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=10, show_default=True)
+@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=18, show_default=True)
 @click.option('--sigma_min',               help='Lowest noise level  [default: varies]', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True))
 @click.option('--sigma_max',               help='Highest noise level  [default: varies]', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True))
 @click.option('--rho',                     help='Time step exponent', metavar='FLOAT',                              type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
@@ -328,8 +381,7 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
         if i == 1:
             plot_diffusion = False
-        #i += 1
-        images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
+        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
