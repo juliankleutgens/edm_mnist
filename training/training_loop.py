@@ -283,8 +283,8 @@ def training_loop(
                         labels = labels[:8]
                 labels = labels.to(device)
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
-                loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe, plot_batch=plot_training_images,
-                               path= os.path.join(run_dir, f'iteration_{i}') if plot_training_images else None, num_cond_frames=num_cond_frames)
+                loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe, plot_batch=False,
+                               path= None, num_cond_frames=num_cond_frames)
                 training_stats.report('Loss/loss', loss)
                 loss.sum().mul(loss_scaling / batch_gpu_total).backward()
                 wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg, 'iteration': i})
