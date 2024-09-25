@@ -10,11 +10,73 @@
 
 import torch
 from torch_utils import persistence
+import wandb
+import os
 
 #----------------------------------------------------------------------------
 # Loss function corresponding to the variance preserving (VP) formulation
 # from the paper "Score-Based Generative Modeling through Stochastic
 # Differential Equations".
+def plot_batch_of_image_and_noise(x_batch, n_batch, y_plus_n_batch, Dy_batch, sigma, path=None):
+    import matplotlib.pyplot as plt
+    import torch
+
+    num_images = 10
+    if x_batch.shape[0] < 10:
+        num_images = x_batch.shape[0]
+    fig, ax = plt.subplots(4, num_images, figsize=(20, 6))
+
+    for i in range(num_images):
+        # Handle x_batch (detach if requires grad, and convert to numpy)
+        if isinstance(x_batch[i], torch.Tensor):
+            x = x_batch[i].detach().clone().to('cpu').numpy()  # Detach to avoid the gradient error
+        else:
+            x = x_batch[i]  # If it's already a numpy array, use it directly
+        x = (x * 127.5 + 128).clip(0, 255).astype('uint8')
+
+        if isinstance(y_plus_n_batch[i], torch.Tensor):
+            y_plus_n = y_plus_n_batch[i].detach().clone().to('cpu').numpy()
+        else:
+            y_plus_n = y_plus_n_batch[i]
+        y_plus_n = (y_plus_n * 127.5 + 128).clip(0, 255).astype('uint8')
+
+        # Handle n_batch (detach if requires grad, and convert to numpy)
+        if isinstance(n_batch[i], torch.Tensor):
+            n = n_batch[i].detach().clone().to('cpu').numpy()  # Detach to avoid the gradient error
+        else:
+            n = n_batch[i]  # If it's already a numpy array, use it directly
+        n = (n * 127.5 + 128).clip(0, 255).astype('uint8')
+
+        # Handle Dy_batch (detach if requires grad, and convert to numpy)
+        if isinstance(Dy_batch[i], torch.Tensor):
+            Dy = Dy_batch[i].detach().clone().to('cpu').numpy()  # Detach to avoid the gradient error
+        else:
+            Dy = Dy_batch[i]  # If it's already a numpy array, use it directly
+        Dy = (Dy * 127.5 + 128).clip(0, 255).astype('uint8')
+
+        # Plotting
+        ax[0, i].imshow(x.squeeze(), cmap='gray')
+        ax[0, i].set_title('Image')
+        ax[0, i].axis('off')
+
+        ax[1, i].imshow(n.squeeze(), cmap='gray')
+        ax[1, i].set_title(f'Noise with sigma={sigma[i].squeeze():.2f}')
+        ax[1, i].axis('off')
+
+        ax[2, i].imshow(y_plus_n.squeeze(), cmap='gray')
+        ax[2, i].set_title('Image + Noise')
+        ax[2, i].axis('off')
+
+        ax[3, i].imshow(Dy.squeeze(), cmap='gray')
+        ax[3, i].set_title('D(y+n)')
+        ax[3, i].axis('off')
+
+    plt.savefig(path, bbox_inches='tight', pad_inches=0)
+    plt.close()
+    full_path = path + '.png'
+    wandb_image = wandb.Image(full_path, caption=f"Image, Noise, Image+Noise, D(y+n)")
+    wandb.log({"Image, Noise, Image+Noise, D(y+n)": wandb_image})
+    print(f'Saved Image, Noise. W&B run URL is: {wandb.run.get_url()}')
 
 @persistence.persistent_class
 class VPLoss:
@@ -69,13 +131,23 @@ class EDMLoss:
         self.P_std = P_std
         self.sigma_data = sigma_data
 
-    def __call__(self, net, images, labels=None, augment_pipe=None):
+    def __call__(self, net, images, labels=None, augment_pipe=None, plot_batch= True, path=None, num_cond_frames=0):
         rnd_normal = torch.randn([images.shape[0], 1, 1, 1], device=images.device)
         sigma = (rnd_normal * self.P_std + self.P_mean).exp()
         weight = (sigma ** 2 + self.sigma_data ** 2) / (sigma * self.sigma_data) ** 2
         y, augment_labels = augment_pipe(images) if augment_pipe is not None else (images, None)
         n = torch.randn_like(y) * sigma
-        D_yn = net(y + n, sigma, labels, augment_labels=augment_labels)
+        if num_cond_frames > 0:
+            y_condtional = y[:, :num_cond_frames, :, :]
+            y = y[:, num_cond_frames:, :, :]
+            n = n[:, num_cond_frames:, :, :]
+            y_plus_n = torch.cat([y_condtional, y + n], dim=1)
+        else:
+            y_plus_n = y + n
+        D_yn = net(y_plus_n, sigma, labels, augment_labels=augment_labels, num_cond_frames=num_cond_frames)
+        if plot_batch:
+            plot_batch_of_image_and_noise(y,n, y+n, D_yn, sigma, path=path)
+
         loss = weight * ((D_yn - y) ** 2)
         return loss
 

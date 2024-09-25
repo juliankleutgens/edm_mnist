@@ -27,8 +27,14 @@ import matplotlib.pyplot as plt
 def edm_sampler(
     net, latents, class_labels=None, randn_like=torch.randn_like,
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
-    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False, plot_diffusion=False
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, plot_diffusion=False, local_computer= False, image=None
 ):
+    if net.num_cond_frames > 0:
+        cond_frames = image[:, :net.num_cond_frames,:,:]
+        # repeat cond_frames to match the batch size of latents
+        cond_frames = cond_frames.repeat(latents.shape[0], 1, 1, 1)
+    else:
+        cond_frames = None
     # Adjust noise levels based on what's supported by the network.
     sigma_min = max(sigma_min, net.sigma_min)
     sigma_max = min(sigma_max, net.sigma_max)
@@ -50,13 +56,21 @@ def edm_sampler(
         x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
 
         # Euler step.
-        denoised = net(x_hat, t_hat, class_labels).to(torch.float64)
+        if net.num_cond_frames > 0:
+            x_input = torch.cat([cond_frames, x_hat], dim=1)
+        else:
+            x_input = x_hat
+        denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
         d_cur = (x_hat - denoised) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # Apply 2nd order correction.
         if i < num_steps - 1:
-            denoised = net(x_next, t_next, class_labels).to(torch.float64)
+            if net.num_cond_frames > 0:
+                x_input = torch.cat([cond_frames, x_next], dim=1)
+            else:
+                x_input = x_hat
+            denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
@@ -235,7 +249,8 @@ def parse_int_list(s):
     return ranges
 
 #----------------------------------------------------------------------------
-def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, wandb_run_id=None, device=torch.device('cuda'), local_computer=False, dist=None, net=None, class_idx=None, subdirs=False):
+def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, wandb_run_id=None, device=torch.device('cuda'), local_computer=False,
+                                    dist=None, net=None, class_idx=None, subdirs=False, image=None, label=None):
     """Generate random images using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
     """
@@ -243,7 +258,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
 #        "seeds": seeds,  # Adjust seeds as needed
 #        "max_batch_size": max_batch_size,
 #        "class_idx": class_idx,
-        "num_steps": 32,
+        "num_steps": 18,
         "sigma_min": None,  # Use default value
         "sigma_max": None,  # Use default value
         "rho": 7,
@@ -260,9 +275,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
 #        "wandb_run_id":  wandb_run_id # Replace with actual W&B run ID if needed
     }
 
-    # Initialize W&B using the provided run ID
-
-        # Initialize W&B using the provided run ID (if not already initialized)
+    # Resume W&B run if needed
     if wandb_run_id:
         import wandb
         if not wandb.run:
@@ -322,7 +335,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
         plot_diffusion = True
-        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, plot_diffusion=plot_diffusion , **sampler_kwargs)
+        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, plot_diffusion=plot_diffusion, image=image , **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()

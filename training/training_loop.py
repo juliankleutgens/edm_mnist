@@ -177,7 +177,7 @@ def training_loop(
                                   seq_len=seq_len, num_digits=1, image_size=image_size, deterministic=False,
                                   digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False))
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
-        dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu,**data_loader_kwargs))
+        dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//seq_len,**data_loader_kwargs))
         dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
 
     # Construct network.
@@ -241,7 +241,10 @@ def training_loop(
 
     # Train.
     use_label = moving_mnist.get('use_labels', False)
+    plot_training_images = False
     dist.print0(f'Training for {total_kimg} kimg...')
+    directory =  os.path.join(run_dir,'training_images')
+    os.makedirs(directory, exist_ok=True)
     dist.print0()
     cur_nimg = resume_kimg * 1000
     cur_tick = 0
@@ -259,20 +262,24 @@ def training_loop(
                 images, labels = next(dataset_iterator)
                 if mnist:
                     # video: [batch_gpu, seq_len, img_h, img_w, gray_scale]
-                    images, labels = convert_video2images_in_batch(images, labels, use_label)
+                    images, labels = convert_video2images_in_batch(images=images, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
                     # images: [batch_gpu * seq_len, img_channels, img_h, img_w]
+                    images = images.to(device).to(torch.float32) * 2 - 1
+                else:
+                    images = images.to(device).to(torch.float32) / 127.5 - 1
                 if local_computer:
-                    images = images[:4, :, :, :]
-                if use_label:
-                    labels = labels[:4]
+                    images = images[:8, :, :, :]
+                    if use_label:
+                        labels = labels[:8]
                 labels = labels.to(device)
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
-                images = images.to(device).to(torch.float32) / 127.5 - 1
-                loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
+                loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe, plot_batch=plot_training_images,
+                               path= os.path.join(run_dir,'training_images', f'iteration_{i}') if plot_training_images else None, num_cond_frames=num_cond_frames)
                 training_stats.report('Loss/loss', loss)
                 loss.sum().mul(loss_scaling / batch_gpu_total).backward()
                 wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg, 'iteration': i})
                 i += 1
+                plot_training_images = False
 
         # Update weights.
         for g in optimizer.param_groups:
@@ -319,6 +326,7 @@ def training_loop(
         if not local_computer:
             torch.cuda.reset_peak_memory_stats()
         dist.print0(' '.join(fields))
+        plot_training_images = True
 
         # Check for abort.
         if (not done) and dist.should_stop():
@@ -350,6 +358,14 @@ def training_loop(
                     else:
                         class_idx = None
                     print(f"Generating images at tick {cur_tick} and iteration {i}")
+                    if num_cond_frames > 0:
+                        data, labels = next(dataset_iterator)
+                        images, labels = convert_video2images_in_batch(images=data, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
+                        images = images.to(device).to(torch.float32) * 2 - 1
+                        image = images[:1, :, :, :]
+                    else:
+                        images = None
+
                     generate_images_during_training( network_pkl = snapshot_path,
                                      outdir = os.path.join(run_dir, f'generated_images_{i}'),
                                      seeds = list(range(1, 9)),
@@ -361,6 +377,7 @@ def training_loop(
                                      local_computer=local_computer,
                                      dist=dist,
                                      net=net,
+                                     image=image,
                                      )
                     print(f"Generated images in {time.time() - t:.2f} seconds")
                 except Exception as e:

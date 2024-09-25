@@ -90,7 +90,6 @@ class MovingMNIST(object):
 
             # Otherwise, use the original free movement behavior
             else:
-
                 sx = np.random.randint(image_size-digit_size)
                 sy = np.random.randint(image_size-digit_size)
                 dx = np.random.randint(-4, 5)
