@@ -96,6 +96,26 @@ def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, save_pat
         plt.show()
     plt.close()
 
+def plot_diffusion_process_conditional(intermediate_images, num_rows=2, num_cols=5,images=None, save_path=None):
+    num_frames = images.shape[1]
+    images = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+    if num_rows * num_cols < len(intermediate_images):
+        num_rows = (len(intermediate_images)+num_frames + num_cols - 1) // num_cols
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
+
+    for i, ax in enumerate(axes.flatten()):
+        if i < num_frames:
+            ax.imshow(images[0,:,:, i], cmap='gray')
+            ax.set_title(f'Frame {i + 1}')
+        elif i < len(intermediate_images) + num_frames and i >= num_frames:
+            ax.imshow(intermediate_images[i-num_frames], cmap='gray')
+            ax.set_title(f'Step {i- num_frames+ 1}')
+        ax.axis('off')
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+    else:
+        plt.show()
+    plt.close()
 #----------------------------------------------------------------------------
 # Generalized ablation sampler, representing the superset of all sampling
 # methods discussed in the paper.
@@ -336,7 +356,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
         plot_diffusion = True
-        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, plot_diffusion=plot_diffusion, image=image , **sampler_kwargs)
+        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, plot_diffusion=plot_diffusion, image=image, **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
@@ -361,7 +381,10 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
             plt.close()
 
             image_path_steps = image_path.replace('.png', '_steps.png')
-            plot_diffusion_process(intermediate_images, save_path=image_path_steps)
+            if net.num_cond_frames > 0:
+                plot_diffusion_process_conditional(intermediate_images, images=image, save_path=image_path_steps)
+            else:
+                plot_diffusion_process(intermediate_images, save_path=image_path_steps)
             if wandb.run is not None:
                 wandb_image = wandb.Image(image_path_steps, caption=f"Seed: {seed}")
                 wandb_images.append(wandb_image)
