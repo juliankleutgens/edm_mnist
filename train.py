@@ -94,6 +94,7 @@ def parse_int_list(s):
 @click.option('--resample_filter', help='The resample filter for the model',                      type=parse_int_list, default=[1,1])
 @click.option('--model_channels', help='The number of channels in the model',                     type=int, default=32)
 @click.option('--channel_mult',  help='The channel multiplier for the model',                     type=parse_int_list, default=[1,1,2])
+@click.option('--move_horizontally', help='If the digits should move horizontally',              is_flag=True)
 
 
 def main(**kwargs):
@@ -121,7 +122,7 @@ def main(**kwargs):
     c.network_kwargs = dnnlib.EasyDict()
     c.loss_kwargs = dnnlib.EasyDict()
     c.optimizer_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=opts.lr, betas=[0.9,0.999], eps=1e-8)
-    c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path, use_labels=opts.cond)
+    c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path, use_labels=opts.cond, move_horizontally=opts.move_horizontally)
     c.local_computer = opts.local_computer
     c.seq_len = opts.seq_len
     c.num_cond_frames = opts.num_cond_frames

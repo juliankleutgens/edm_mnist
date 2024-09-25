@@ -141,6 +141,7 @@ def training_loop(
         # More training-specific parameters
         'fp16': network_kwargs.get('use_fp16', False),
         'local_computer': local_computer,
+        'move_horizontally': moving_mnist.get('move_horizontally', False),
     })
 
     # Initialize.
@@ -181,7 +182,7 @@ def training_loop(
         image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
                                   seq_len=seq_len, num_digits=1, image_size=image_size, deterministic=False,
-                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False))
+                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False), move_horizontally=moving_mnist.get('move_horizontally', False))
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//seq_len,**data_loader_kwargs))
         if num_cond_frames > 0:
