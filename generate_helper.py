@@ -303,6 +303,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
     else: # Use the provided network
         dist.print0(f'Using provided network...')
         net = deepcopy(net).to(device)
+        image = image.to(device)
 
 
     # Other ranks follow.
