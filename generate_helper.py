@@ -243,7 +243,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
 #        "seeds": seeds,  # Adjust seeds as needed
 #        "max_batch_size": max_batch_size,
 #        "class_idx": class_idx,
-        "num_steps": 18,
+        "num_steps": 32,
         "sigma_min": None,  # Use default value
         "sigma_max": None,  # Use default value
         "rho": 7,
@@ -312,6 +312,7 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
         class_labels = None
         if net.label_dim:
             class_labels = torch.eye(net.label_dim, device=device)[rnd.randint(net.label_dim, size=[batch_size], device=device)]
+            print(f'Generating images for class index: {class_idx}')
         if class_idx is not None:
             class_labels[:, :] = 0
             class_labels[:, class_idx] = 1
@@ -354,7 +355,10 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
 
             # Log all images to W&B
         if wandb.run is not None:
-            wandb.log({"generated_images": wandb_images})
+            if class_idx is not None:
+                wandb.log({"class_idx": class_idx, "generated_images": wandb_images})
+            else:
+                wandb.log({"generated_images": wandb_images})
             print(f'Logged {len(wandb_images)} images to W&B')
             print(f'The W&B run URL is: {wandb.run.get_url()}')
 

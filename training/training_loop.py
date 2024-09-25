@@ -240,6 +240,7 @@ def training_loop(
         del data  # conserve memory
 
     # Train.
+    use_label = moving_mnist.get('use_labels', False)
     dist.print0(f'Training for {total_kimg} kimg...')
     dist.print0()
     cur_nimg = resume_kimg * 1000
@@ -258,14 +259,15 @@ def training_loop(
                 images, labels = next(dataset_iterator)
                 if mnist:
                     # video: [batch_gpu, seq_len, img_h, img_w, gray_scale]
-                    images, labels = convert_video2images_in_batch(images, labels)
+                    images, labels = convert_video2images_in_batch(images, labels, use_label)
                     # images: [batch_gpu * seq_len, img_channels, img_h, img_w]
                 if local_computer:
                     images = images[:4, :, :, :]
+                if use_label:
                     labels = labels[:4]
+                labels = labels.to(device)
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
                 images = images.to(device).to(torch.float32) / 127.5 - 1
-                labels = labels.to(device)
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
                 training_stats.report('Loss/loss', loss)
                 loss.sum().mul(loss_scaling / batch_gpu_total).backward()
@@ -342,14 +344,16 @@ def training_loop(
                 wandb.save(snapshot_path)  # Log snapshot to W&B
             if generate_images:
                 try:
-                    #torch.cuda.empty_cache()  # Clear cached memory
-                    #torch.cuda.synchronize()  # Synchronize CUDA operations
                     t = time.time()
+                    if use_label:
+                        class_idx = np.random.randint(0, dataset_obj.label_dim)
+                    else:
+                        class_idx = None
                     print(f"Generating images at tick {cur_tick} and iteration {i}")
                     generate_images_during_training( network_pkl = snapshot_path,
                                      outdir = os.path.join(run_dir, f'generated_images_{i}'),
-                                     seeds = list(range(1, 32)),
-                                     class_idx=None,
+                                     seeds = list(range(1, 9)),
+                                     class_idx=class_idx,
                                      max_batch_size=64,
                                      device=torch.device('cuda'),
                                      wandb_run_id=wandb.run.id,
