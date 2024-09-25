@@ -113,6 +113,8 @@ def training_loop(
         # seq_len = 64
         batch_size_set = batch_size
         batch_size = batch_size * seq_len
+        if num_cond_frames > 0:
+            batch_size = batch_size_set * (seq_len-num_cond_frames)
 
     # Initialize W&B
     # Initialize W&B
@@ -158,6 +160,10 @@ def training_loop(
     num_accumulation_rounds = batch_gpu_total // batch_gpu
     print(
         f"batch_size: {batch_size}, batch_gpu: {batch_gpu}, num_accumulation_rounds: {num_accumulation_rounds}, world_size: {dist.get_world_size()}")
+    if mnist and num_cond_frames > 0:
+        print(f"the batchsize for the GPU should be: {batch_size_set} (bs) * ({seq_len} (seq_len) - {num_cond_frames} (num_cond_frames)) = {batch_size}")
+        print(
+            f"batch_gpu: {batch_gpu} == batch_size: {batch_size} // num_gpus: {dist.get_world_size()} // num_accumulation_rounds: {num_accumulation_rounds}")
     assert batch_size == batch_gpu * num_accumulation_rounds * dist.get_world_size()
 
     # Load dataset.
@@ -178,7 +184,11 @@ def training_loop(
                                   digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False))
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//seq_len,**data_loader_kwargs))
-        dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
+        if num_cond_frames > 0:
+            print(
+                f"The Batchsize for the Moving MNIST with Conditional frames: {batch_size_set} (bs) * ({seq_len} (seq_len) - {num_cond_frames} (num_cond_frames)) = {batch_size}")
+        else:
+            dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
 
     # Construct network.
     dist.print0('Constructing network...')
