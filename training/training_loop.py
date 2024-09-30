@@ -291,8 +291,8 @@ def training_loop(
                     # video: [batch_gpu, seq_len, img_h, img_w, gray_scale]
                     images, labels, frame_idx_dir_change = next(dataset_iterator)
                     num_next_frames_after_direction_change = (frame_idx_dir_change - num_cond_frames + 1 >= 0).int().sum()
-                    if dist.get_world_size() > 1:  # Check if we are in a multi-GPU setup
-                        dist.all_reduce(num_next_frames_after_direction_change, op=dist.ReduceOp.SUM)
+                    #if dist.get_world_size() > 1:  # Check if we are in a multi-GPU setup
+                     #   dist.all_reduce(num_next_frames_after_direction_change, op=dist.ReduceOp.SUM)
                     frames_aft_dir_change_ova += num_next_frames_after_direction_change
                     images, labels = convert_video2images_in_batch(images=images, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
 
