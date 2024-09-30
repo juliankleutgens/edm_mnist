@@ -57,7 +57,7 @@ def print0(*args, **kwargs):
         print(*args, **kwargs)
 
 #----------------------------------------------------------------------------
-"""
+
 import torch.distributed as dist  # Ensure this is at the top
 from torch.distributed import ReduceOp
 
@@ -65,4 +65,3 @@ from torch.distributed import ReduceOp
 def all_reduce(tensor, op=dist.ReduceOp.SUM):
     if dist.is_initialized():
         dist.all_reduce(tensor, op)
-"""
