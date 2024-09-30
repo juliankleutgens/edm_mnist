@@ -158,6 +158,9 @@ def training_loop(
         'fp16': network_kwargs.get('use_fp16', False),
         'local_computer': local_computer,
         'move_horizontally': moving_mnist.get('move_horizontally', False),
+        'use_labels': moving_mnist.get('use_labels', False),
+        'let_last_frame_after_change': moving_mnist.get('let_last_frame_after_change', False),
+        'prob_direction_change': moving_mnist.get('prob_direction_change', 0.5),
     })
 
     # Initialize.
@@ -293,6 +296,8 @@ def training_loop(
                     num_next_frames_after_direction_change = (frame_idx_dir_change - num_cond_frames + 1 >= 0).int().sum()
                     if dist.get_world_size() > 1:  # Check if we are in a multi-GPU setup
                         dist.all_reduce(num_next_frames_after_direction_change, op=dist.ReduceOp.SUM)
+                    jj = 1
+                    polt_images_highlight_direction_change(images[jj,:,:,:,0], frame_idx_dir_change[jj,:])
                     frames_aft_dir_change_ova += num_next_frames_after_direction_change
                     images, labels = convert_video2images_in_batch(images=images, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
 

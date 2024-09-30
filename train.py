@@ -241,7 +241,7 @@ def main(**kwargs):
     dtype_str = 'fp16' if c.network_kwargs.use_fp16 else 'fp32'
     if c.moving_mnist.moving_mnist:
         dataset_name = 'moving_mnist'
-    desc = f'{dataset_name:s}-{cond_str:s}-{opts.arch:s}-{opts.precond:s}-gpus{dist.get_world_size():d}-batch{c.batch_size:d}-{dtype_str:s}'
+    desc = f'{dataset_name:s}-gpus{dist.get_world_size():d}-batch{c.batch_size:d}-{dtype_str:s}-p{opts.prob_direction_change}-seq_len{opts.seq_len}-num_cond_frames{opts.num_cond_frames}-move_horizontally{opts.move_horizontally})'
     if opts.desc is not None:
         desc += f'-{opts.desc}'
 
