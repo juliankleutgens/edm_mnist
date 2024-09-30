@@ -44,6 +44,22 @@ def plot_images_fixed(images_batch):
 
     plt.show()
 
+def polt_images_highlight_direction_change(image, direction_change):
+    from matplotlib.patches import Rectangle
+    if type(direction_change) is not list:
+        direction_change = list(direction_change)
+    num_of_images = image.shape[0]
+    fig, ax = plt.subplots(1, num_of_images, figsize=(num_of_images, 2))
+    for i in range(num_of_images):
+        ax[i].imshow(image[i, :, :], cmap='gray')
+        if i in direction_change:
+            rect = Rectangle((0, 0), image.shape[1], image.shape[2],
+                             linewidth=2, edgecolor='red', facecolor='none')
+            ax[i].add_patch(rect)
+            ax[i].set_title('Direction Change', fontsize=8)
+        ax[i].axis('off')
+    plt.show()
+
 def print_gpu_memory():
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
@@ -182,9 +198,11 @@ def training_loop(
         image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
                                   seq_len=seq_len, num_digits=1, image_size=image_size, deterministic=False,
-                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False), move_horizontally=moving_mnist.get('move_horizontally', False))
+                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False), move_horizontally=moving_mnist.get('move_horizontally', False),
+                                  log_direction_change=True, let_last_frame_after_change=moving_mnist.get('let_last_frame_after_change', False),
+                                  prob_direction_change=moving_mnist.get('prob_direction_change', 0.5))
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
-        dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//seq_len,**data_loader_kwargs))
+        dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//(seq_len-num_cond_frames), **data_loader_kwargs))
         if num_cond_frames > 0:
             print(
                 f"The Batchsize for the Moving MNIST with Conditional frames: {batch_size_set} (bs) * ({seq_len} (seq_len) - {num_cond_frames} (num_cond_frames)) = {batch_size}")
@@ -203,9 +221,6 @@ def training_loop(
     net.train().requires_grad_(True).to(device)
     if dist.get_rank() == 0:
         with torch.no_grad():
-            images = torch.zeros([batch_gpu, dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution], device=device)
-            sigma = torch.ones([batch_gpu], device=device)
-            labels = torch.zeros([batch_gpu, net.label_dim], device=device)
             wrapped_model = ModelWrapper(net, sigma_value=1.0)  # Set the sigma value
             # Run summary with the input size (1 channels, 32x32)
             summary(wrapped_model, input_size=(dataset_obj.num_channels+num_cond_frames, dataset_obj.resolution, dataset_obj.resolution))
@@ -258,6 +273,7 @@ def training_loop(
     #os.makedirs(directory, exist_ok=True)
     dist.print0()
     cur_nimg = resume_kimg * 1000
+    cur_nimg_copy = cur_nimg
     cur_tick = 0
     tick_start_nimg = cur_nimg
     tick_start_time = time.time()
@@ -265,31 +281,44 @@ def training_loop(
     dist.update_progress(cur_nimg // 1000, total_kimg)
     stats_jsonl = None
     i = 0
+    frames_aft_dir_change_ova = 0
     while True:
         # Accumulate gradients.
         optimizer.zero_grad(set_to_none=True)
         for round_idx in range(num_accumulation_rounds):
             with misc.ddp_sync(ddp, (round_idx == num_accumulation_rounds - 1)):
-                images, labels = next(dataset_iterator)
                 if mnist:
                     # video: [batch_gpu, seq_len, img_h, img_w, gray_scale]
+                    images, labels, frame_idx_dir_change = next(dataset_iterator)
+                    num_next_frames_after_direction_change = (frame_idx_dir_change - num_cond_frames + 1 >= 0).int().sum()
+                    if dist.get_world_size() > 1:  # Check if we are in a multi-GPU setup
+                        dist.all_reduce(num_next_frames_after_direction_change, op=dist.ReduceOp.SUM)
+                    frames_aft_dir_change_ova += num_next_frames_after_direction_change
                     images, labels = convert_video2images_in_batch(images=images, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
+
                     # images: [batch_gpu * seq_len, img_channels, img_h, img_w]
-                    images = images.to(device).to(torch.float32) * 2 - 1
+                    images.to(device).to(torch.float32) * 2 - 1
                 else:
+                    images, labels = next(dataset_iterator)
                     images = images.to(device).to(torch.float32) / 127.5 - 1
                 if local_computer:
                     images = images[:8, :, :, :]
                     if use_label:
                         labels = labels[:8]
+
+
                 labels = labels.to(device)
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe, plot_batch=False,
                                path= None, num_cond_frames=num_cond_frames)
                 training_stats.report('Loss/loss', loss)
                 loss.sum().mul(loss_scaling / batch_gpu_total).backward()
-                wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg, 'iteration': i})
                 i += 1
+                cur_nimg_copy += batch_size
+                frames_aft_dir_change_ova_avg = frames_aft_dir_change_ova / cur_nimg_copy
+
+                wandb.log({'loss': loss.sum().mul(loss_scaling / batch_gpu_total), 'step': cur_nimg, 'iteration': i, 'predicted_frames_after_dir_change': frames_aft_dir_change_ova_avg})
+
                 plot_training_images = False
 
         # Update weights.
@@ -369,13 +398,13 @@ def training_loop(
                     else:
                         class_idx = None
                     print(f"Generating images at tick {cur_tick} and iteration {i}")
-                    if num_cond_frames > 0:
-                        data, labels = next(dataset_iterator)
-                        images, labels = convert_video2images_in_batch(images=data, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
-                        images = images.to(device).to(torch.float32) * 2 - 1
-                        image = images[:1, :, :, :]
-                    else:
-                        images = None
+
+                    data, labels, frame_idx_dir_change = next(dataset_iterator)
+                    images, labels = convert_video2images_in_batch(images=data, labels=labels, use_label=use_label,
+                                                                   num_cond_frames=num_cond_frames)
+                    images = images.to(device).to(torch.float32) * 2 - 1
+                    image = images[:1, :, :, :]
+
 
                     generate_images_during_training( network_pkl = snapshot_path,
                                      outdir = os.path.join(run_dir, f'generated_images_{i}'),

@@ -83,7 +83,8 @@ def parse_int_list(s):
 @click.option('--moving_mnist',  help='If one like to train on the moving MNIST dataset',           is_flag=True)
 @click.option('--moving_mnist_path',  help='The path to the MNIST dataset',                         type=str, default='./data')
 @click.option('--local_computer',  help='If you want to debug on the cpu on the local computer',    is_flag=True)
-@click.option('--seq_len',       help='The length of the sequence',                                 type=int, default=64)
+@click.option('--seq_len',       help='Th'
+                                      'e length of the sequence',                                 type=int, default=64)
 @click.option('--num_cond_frames', help='The number of frames to condition on. One has no condition for 0, which is set by default', type=int, default=0)
 @click.option('--generate_images',help='Generate images after making the snapshot of the model',  is_flag=True)
 @click.option('--digit_filter',  help='The digits to filter out from the MNIST dataset',           type=parse_int_list)
@@ -95,6 +96,8 @@ def parse_int_list(s):
 @click.option('--model_channels', help='The number of channels in the model',                     type=int, default=32)
 @click.option('--channel_mult',  help='The channel multiplier for the model',                     type=parse_int_list, default=[1,1,2])
 @click.option('--move_horizontally', help='If the digits should move horizontally',              is_flag=True)
+@click.option('--prob_direction_change', help='The probability of changing the direction of the digit to the right, Note: for that one has to use --move_horizontally', type=float, default=0.5)
+@click.option('--let_last_frame_after_change', help='The second last frame is always in the middel and then in the last frame a dircation change was made. Note: for that one has to use --move_horizontally', is_flag=True)
 
 
 def main(**kwargs):
@@ -122,7 +125,8 @@ def main(**kwargs):
     c.network_kwargs = dnnlib.EasyDict()
     c.loss_kwargs = dnnlib.EasyDict()
     c.optimizer_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=opts.lr, betas=[0.9,0.999], eps=1e-8)
-    c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path, use_labels=opts.cond, move_horizontally=opts.move_horizontally)
+    c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path, use_labels=opts.cond, move_horizontally=opts.move_horizontally
+                                     ,prob_direction_change=opts.prob_direction_change, let_last_frame_after_change=opts.let_last_frame_after_change)
     c.local_computer = opts.local_computer
     c.seq_len = opts.seq_len
     c.num_cond_frames = opts.num_cond_frames

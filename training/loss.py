@@ -70,12 +70,14 @@ def plot_batch_of_image_and_noise(x_batch, n_batch, y_plus_n_batch, Dy_batch, si
         ax[3, i].imshow(Dy.squeeze(), cmap='gray')
         ax[3, i].set_title('D(y+n)')
         ax[3, i].axis('off')
-
-    plt.savefig(path, bbox_inches='tight', pad_inches=0)
+    if path is not None:
+        plt.savefig(path, bbox_inches='tight', pad_inches=0)
+        full_path = path + '.png'
+        wandb_image = wandb.Image(full_path, caption=f"Image, Noise, Image+Noise, D(y+n)")
+        wandb.log({"Image, Noise, Image+Noise, D(y+n)": wandb_image})
+    else:
+        plt.show()
     plt.close()
-    full_path = path + '.png'
-    wandb_image = wandb.Image(full_path, caption=f"Image, Noise, Image+Noise, D(y+n)")
-    wandb.log({"Image, Noise, Image+Noise, D(y+n)": wandb_image})
     print(f'Saved Image, Noise. W&B run URL is: {wandb.run.get_url()}')
 
 @persistence.persistent_class

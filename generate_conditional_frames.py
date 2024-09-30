@@ -16,50 +16,89 @@ import pickle
 import numpy as np
 import torch
 import PIL.Image
-from copy import deepcopy
 import dnnlib
 from torch_utils import distributed as dist
 import matplotlib.pyplot as plt
+from moving_mnist import MovingMNIST  # Assuming you have a MovingMNIST loader
+from torch.utils.data import DataLoader
+from torch_utils.utility import convert_video2images_in_batch
 
+def plot_curve_of_t_steps(sigma_min, sigma_max, rho, num_steps, net, latents):
+    # Time step discretization.
+    step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
+    t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+    t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+
+    # plot t steps
+    plt.plot(t_steps.cpu().numpy())
+    plt.xlabel('Step')
+    plt.ylabel('t step')
+    plt.title('Time step discretization')
+    # highest noise level is sigma_max
+    plt.axhline(y=sigma_max, color='r', linestyle='--', label=f'sigma_max {sigma_max}')
+    # lowest noise level is sigma_min
+    plt.axhline(y=sigma_min, color='g', linestyle='--', label=f'sigma_min {sigma_min}')
+    plt.legend()
+    plt.show()
+    plt.close()
+
+def plot_gamma(gamma_arr, S_churn):
+    # plot gamma values
+    plt.plot(gamma_arr)
+    plt.xlabel('Step')
+    plt.ylabel('Gamma')
+    plt.title(f'Gamma values with S_churn {S_churn}')
+    plt.show()
+    plt.close()
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
 
 def edm_sampler(
     net, latents, class_labels=None, randn_like=torch.randn_like,
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
-    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, plot_diffusion=False, local_computer= False, image=None
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False,
+    plot_diffusion=False, image=None
 ):
+    # Adjust noise levels based on what's supported by the network.
     if net.num_cond_frames > 0:
-        cond_frames = image[:, :net.num_cond_frames,:,:]
-        # repeat cond_frames to match the batch size of latents
+        cond_frames = image[:, :net.num_cond_frames, :, :]
         cond_frames = cond_frames.repeat(latents.shape[0], 1, 1, 1)
     else:
         cond_frames = None
-    # Adjust noise levels based on what's supported by the network.
+
     sigma_min = max(sigma_min, net.sigma_min)
     sigma_max = min(sigma_max, net.sigma_max)
-    intermediate_images = []
 
     # Time step discretization.
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+    intermediate_images = []
+    intermediate_denoised = []
+    intermediate_denoised_prime = []
+    intermediate_direction_cur = []
+
+
 
     # Main sampling loop.
-    x_next = latents.to(torch.float64) * t_steps[0]
+    x_next = latents.to(torch.float64) * t_steps[0] * 0.1
+    gamma_arr = []
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         x_cur = x_next
 
         # Increase noise temporarily.
         gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
+        gamma_arr.append(gamma)
         t_hat = net.round_sigma(t_cur + gamma * t_cur)
         x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+        # if S_churn is 0, gamma is 0, t_hat is equal to t_cur, x_hat is equal to x_cur
 
-        # Euler step.
         if net.num_cond_frames > 0:
             x_input = torch.cat([cond_frames, x_hat], dim=1)
         else:
             x_input = x_hat
+
+        # Euler step.
         denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
         d_cur = (x_hat - denoised) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
@@ -67,7 +106,7 @@ def edm_sampler(
         # Apply 2nd order correction.
         if i < num_steps - 1:
             if net.num_cond_frames > 0:
-                x_input = torch.cat([cond_frames, x_next], dim=1)
+                x_input = torch.cat([cond_frames, x_hat], dim=1)
             else:
                 x_input = x_hat
             denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
@@ -79,9 +118,28 @@ def edm_sampler(
         if plot_diffusion:
             intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+
+            denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
+
+            direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
+
+            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
+
+
+    if plot_diffusion:
+        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
+   #     plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
+        plot_diffusion_process_conditional(intermediate_images, images=image)
+        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
+    #plot_gamma(gamma_arr, S_churn)
     return x_next, intermediate_images
 
-def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, save_path=None):
+
+# Function to plot the intermediate images
+def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, variable_name='Image'):
     if num_rows * num_cols < len(intermediate_images):
         num_rows = (len(intermediate_images) + num_cols - 1) // num_cols
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
@@ -90,11 +148,9 @@ def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, save_pat
             ax.imshow(intermediate_images[i], cmap='gray')
             ax.set_title(f'Step {i + 1}')
         ax.axis('off')
-    if save_path is not None:
-        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
-    else:
-        plt.show()
-    plt.close()
+    title = 'Diffusion process: ' + variable_name
+    plt.suptitle(title)
+    plt.show()
 
 def plot_diffusion_process_conditional(intermediate_images, num_rows=2, num_cols=5,images=None, save_path=None):
     num_frames = images.shape[1]
@@ -107,7 +163,7 @@ def plot_diffusion_process_conditional(intermediate_images, num_rows=2, num_cols
         if i < num_frames:
             ax.imshow(images[0,:,:, i], cmap='gray')
             ax.set_title(f'Frame {i + 1}')
-        elif i < len(intermediate_images) + num_frames and i >= num_frames:
+        elif i - num_frames < len(intermediate_images)  and i >= num_frames:
             ax.imshow(intermediate_images[i-num_frames], cmap='gray')
             ax.set_title(f'Step {i- num_frames+ 1}')
         ax.axis('off')
@@ -269,73 +325,157 @@ def parse_int_list(s):
     return ranges
 
 #----------------------------------------------------------------------------
-def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, wandb_run_id=None, device=torch.device('cuda'), local_computer=False,
-                                    dist=None, net=None, class_idx=None, subdirs=False, image=None, label=None):
+
+def generate_images_and_save_heatmap(
+        network_pkl, outdir, num_images=100, max_batch_size=1, num_steps=18,
+        sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
+):
+    """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
+
+    # Initialize the MovingMNIST dataset
+    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=5, num_digits=1, image_size=32,
+                              deterministic=False)
+    dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
+    dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=max_batch_size))
+    image, labels = next(dataset_iterator)
+    image = image.to(device)
+
+    with dnnlib.util.open_url(network_pkl) as f:
+        net = pickle.load(f)['ema'].to(device)
+
+    images, labels = convert_video2images_in_batch(images=image, labels=labels, use_label=False,
+                                                   num_cond_frames=net.num_cond_frames)
+    images = images.to(device).to(torch.float32) * 2 - 1
+    image = images[:1, :, :, :]
+
+    # Store sum of images for the heatmap
+    image_sum = None
+    generated_images = []
+
+    for seed in range(num_images):
+        latents = torch.randn([1, net.img_channels, net.img_resolution, net.img_resolution], device=device)
+
+        # Generate the image with S_churn=0.9
+        generated_img, _ = edm_sampler(
+            net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
+            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False
+        )
+
+        # Convert generated image to numpy for processing
+        img_np = (generated_img * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        generated_images.append(img_np[0])
+
+        if image_sum is None:
+            image_sum = img_np[0].astype(np.float32)
+        else:
+            image_sum += img_np[0].astype(np.float32)
+
+        # Save the individual generated images
+        img_path = os.path.join(outdir, f'generated_image_{seed:03d}.png')
+        PIL.Image.fromarray(img_np[0]).save(img_path)
+
+    # Average the pixel intensities to compute the heatmap
+    image_mean = image_sum / num_images
+    generate_heatmap(image_mean, outdir)
+
+
+def generate_heatmap(image_mean, outdir):
+    """Generate and save a heatmap based on the mean pixel intensities of generated images."""
+    plt.figure(figsize=(8, 8))
+    plt.imshow(image_mean[:, :, 0], cmap='hot', interpolation='nearest')  # Assuming grayscale images
+    plt.colorbar(label='Pixel Intensity')
+    plt.title('Heatmap of Generated Images')
+
+    heatmap_path = os.path.join(outdir, 'heatmap.png')
+    plt.savefig(heatmap_path)
+    plt.show()
+
+
+
+@click.command()
+@click.option('--network', 'network_pkl',  help='Network pickle filename', metavar='PATH|URL',                      type=str, required=True)
+@click.option('--outdir',                  help='Where to save the output images', metavar='DIR',                   type=str, required=True)
+@click.option('--seeds',                   help='Random seeds (e.g. 1,2,5-10)', metavar='LIST',                     type=parse_int_list, default='0-63', show_default=True)
+@click.option('--subdirs',                 help='Create subdirectory for every 1000 seeds',                         is_flag=True)
+@click.option('--class', 'class_idx',      help='Class label  [default: random]', metavar='INT',                    type=click.IntRange(min=0), default=None)
+@click.option('--batch', 'max_batch_size', help='Maximum batch size', metavar='INT',                                type=click.IntRange(min=1), default=64, show_default=True)
+
+@click.option('--steps', 'num_steps',      help='Number of sampling steps', metavar='INT',                          type=click.IntRange(min=1), default=18, show_default=True)
+@click.option('--sigma_min',               help='Lowest noise level  [default: varies]', metavar='FLOAT',           type=click.FloatRange(min=0, min_open=True))
+@click.option('--sigma_max',               help='Highest noise level  [default: varies]', metavar='FLOAT',          type=click.FloatRange(min=0, min_open=True))
+@click.option('--rho',                     help='Time step exponent', metavar='FLOAT',                              type=click.FloatRange(min=0, min_open=True), default=7, show_default=True)
+@click.option('--S_churn', 'S_churn',      help='Stochasticity strength', metavar='FLOAT',                          type=click.FloatRange(min=0), default=0, show_default=True)
+@click.option('--S_min', 'S_min',          help='Stoch. min noise level', metavar='FLOAT',                          type=click.FloatRange(min=0), default=0, show_default=True)
+@click.option('--S_max', 'S_max',          help='Stoch. max noise level', metavar='FLOAT',                          type=click.FloatRange(min=0), default='inf', show_default=True)
+@click.option('--S_noise', 'S_noise',      help='Stoch. noise inflation', metavar='FLOAT',                          type=float, default=1, show_default=True)
+
+@click.option('--solver',                  help='Ablate ODE solver', metavar='euler|heun',                          type=click.Choice(['euler', 'heun']))
+@click.option('--disc', 'discretization',  help='Ablate time step discretization {t_i}', metavar='vp|ve|iddpm|edm', type=click.Choice(['vp', 've', 'iddpm', 'edm']))
+@click.option('--schedule',                help='Ablate noise schedule sigma(t)', metavar='vp|ve|linear',           type=click.Choice(['vp', 've', 'linear']))
+@click.option('--scaling',                 help='Ablate signal scaling s(t)', metavar='vp|none',                    type=click.Choice(['vp', 'none']))
+
+@click.option('--local_computer',        help='Use local computer',                                              is_flag=True)
+@click.option('--wandb_run_id',          help='W&B run ID',                                                      type=str, default=None)
+
+def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), **sampler_kwargs):
     """Generate random images using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
-    """
-    sampler_kwargs = {
-#        "seeds": seeds,  # Adjust seeds as needed
-#        "max_batch_size": max_batch_size,
-#        "class_idx": class_idx,
-        "num_steps": 18,
-        "sigma_min": None,  # Use default value
-        "sigma_max": None,  # Use default value
-        "rho": 7,
-        "S_churn": 0,
-        "S_min": 0,
-        "S_max": float('inf'),
-        "S_noise": 1,
-        "solver": None,  # Optional
-        "discretization": None,  # Optional
-        "schedule": None,  # Optional
-        "scaling": None,  # Optional
-#        "subdirs": outdir,
-        "local_computer": local_computer,
-#        "wandb_run_id":  wandb_run_id # Replace with actual W&B run ID if needed
-    }
 
-    # Resume W&B run if needed
+    Examples:
+
+    \b
+    # Generate 64 images and save them as out/*.png
+    python generate.py --outdir=out --seeds=0-63 --batch=64 \\
+        --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
+
+    \b
+    # Generate 1024 images using 2 GPUs
+    torchrun --standalone --nproc_per_node=2 generate.py --outdir=out --seeds=0-999 --batch=64 \\
+        --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
+    """
+    # Initialize W&B using the provided run ID
     if wandb_run_id:
         import wandb
-        if not wandb.run:
-            wandb.init(id=wandb_run_id, resume="allow")
+        wandb.init(id=wandb_run_id, resume="allow")
+    if sampler_kwargs["local_computer"]:
+        device = torch.device('cpu')
 
-    #if sampler_kwargs["local_computer"]:
-    device = torch.device('cpu')
-
-
-    #dist.init()
+    dist.init()
     num_batches = ((len(seeds) - 1) // (max_batch_size * dist.get_world_size()) + 1) * dist.get_world_size()
     all_batches = torch.as_tensor(seeds).tensor_split(num_batches)
     rank_batches = all_batches[dist.get_rank() :: dist.get_world_size()]
 
+
+
     # Rank 0 goes first.
     if dist.get_rank() != 0:
-        print(f'Rank {dist.get_rank()} waiting for rank 0...')
-        #torch.distributed.barrier()
+        torch.distributed.barrier()
 
     # Load network.
-    if net is None:
-        dist.print0(f'Loading network from "{network_pkl}"...')
-        with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
-            net = pickle.load(f)['ema'].to(device)
-    else: # Use the provided network
-        dist.print0(f'Using provided network...')
-        net = deepcopy(net).to(device)
-        image = image.to(device)
-
+    dist.print0(f'Loading network from "{network_pkl}"...')
+    with dnnlib.util.open_url(network_pkl, verbose=(dist.get_rank() == 0)) as f:
+        net = pickle.load(f)['ema'].to(device)
 
     # Other ranks follow.
     if dist.get_rank() == 0:
-        print(f'Rank 0 is ready, other ranks can start...')
-        #torch.distributed.barrier()
+        torch.distributed.barrier()
+
+    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=5, num_digits=1, image_size=32, deterministic=False)
+    dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
+    dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=max_batch_size))
+    image, labels = next(dataset_iterator)
+    image = image.to(device)
+    images, labels = convert_video2images_in_batch(images=image, labels=labels, use_label=False,
+                                                   num_cond_frames=net.num_cond_frames)
+    images = images.to(device).to(torch.float32) * 2 - 1
+    image = images[:1, :, :, :]
 
     # Loop over batches.
-    #dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
-    print(f'Generating {len(seeds)} images to "{outdir}"...')
+    dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
+    i = 0
+    plot_diffusion = True
     for batch_seeds in tqdm.tqdm(rank_batches, unit='batch', disable=(dist.get_rank() != 0)):
-        #torch.distributed.barrier()
+        torch.distributed.barrier()
         batch_size = len(batch_seeds)
         if batch_size == 0:
             continue
@@ -346,7 +486,6 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
         class_labels = None
         if net.label_dim:
             class_labels = torch.eye(net.label_dim, device=device)[rnd.randint(net.label_dim, size=[batch_size], device=device)]
-            print(f'Generating images for class index: {class_idx}')
         if class_idx is not None:
             class_labels[:, :] = 0
             class_labels[:, class_idx] = 1
@@ -355,12 +494,12 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
         sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
-        plot_diffusion = True
-        images, intermediate_images = sampler_fn(net, latents, class_labels, randn_like=rnd.randn_like, plot_diffusion=plot_diffusion, image=image, **sampler_kwargs)
+        if i == 1:
+            plot_diffusion = False
+        images, intermediate_images = sampler_fn(net, latents, class_labels,image=image, randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-        wandb_images = []
         for seed, image_np in zip(batch_seeds, images_np):
             image_dir = os.path.join(outdir, f'{seed-seed%1000:06d}') if subdirs else outdir
             os.makedirs(image_dir, exist_ok=True)
@@ -372,51 +511,28 @@ def generate_images_during_training(network_pkl, outdir, seeds, max_batch_size, 
             else:
                 img = PIL.Image.fromarray(image_np, 'RGB')
                 img.save(image_path)
+            #plt.show()
             plt.axis('off')
             # Save the figure as displayed by Matplotlib
             image_path_plt = image_path.replace('.png', '_plt.png')
-
-
             plt.savefig(image_path_plt, bbox_inches='tight', pad_inches=0)
             plt.close()
-
-            image_path_steps = image_path.replace('.png', '_steps.png')
-            if net.num_cond_frames > 0:
-                plot_diffusion_process_conditional(intermediate_images, images=image, save_path=image_path_steps)
-            else:
-                plot_diffusion_process(intermediate_images, save_path=image_path_steps)
-            if wandb.run is not None:
-                wandb_image = wandb.Image(image_path_steps, caption=f"Seed: {seed}")
-                wandb_images.append(wandb_image)
+        # Log image to W&B
+            if not wandb_run_id == None:
+                wandb.log({"Generated Image": wandb.Image(img)})
 
 
-            # Log all images to W&B
-        if wandb.run is not None:
-            if class_idx is not None:
-                wandb.log({"class_idx": class_idx, "generated_images": wandb_images})
-            else:
-                wandb.log({"generated_images": wandb_images})
-            print(f'Logged {len(wandb_images)} images to W&B')
-            print(f'The W&B run URL is: {wandb.run.get_url()}')
-
+    # Finish W&B run
+    if wandb_run_id:
+        wandb.finish()
 
     # Done.
-    #torch.distributed.barrier()
+    torch.distributed.barrier()
     dist.print0('Done.')
 
+#----------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    main()
 
 #----------------------------------------------------------------------------
-if __name__ == "__main__":
-    outdir = "out/"
-    batch = 1
-    network = "/Users/juliankleutgens/PycharmProjects/edm-main/cluster_output/00115-8xT4/network-snapshot-002502.pkl"
-    local_computer = True
-    steps = 18
-    seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    sigma_min = 0.002
-    sigma_max = 80
-    S_noise = 1
-    max_batch_size = 1
-    dist.init()
-    generate_images_during_training(network_pkl=network, outdir=outdir, seeds=seeds, local_computer=local_computer, device=torch.device('cpu'), dist=dist, max_batch_size=max_batch_size)
-    print("Done.")

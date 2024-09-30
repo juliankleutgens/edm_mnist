@@ -7,12 +7,13 @@ class MovingMNIST(object):
 
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
-    def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True, digit_filter=None, move_horizontally=False, use_label=False):
+    def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True, digit_filter=None, move_horizontally=False,
+                 use_label=False, step_length=0.1, log_direction_change=False, prob_direction_change=0.5, let_last_frame_after_change=True):
         path = data_root
         self.seq_len = seq_len
         self.num_digits = num_digits
         self.image_size = image_size
-        self.step_length = 0.1
+        self.step_length = step_length
         self.digit_size = 16
         self.deterministic = deterministic
         self.seed_is_set = False # multi threaded loading
@@ -20,6 +21,11 @@ class MovingMNIST(object):
         self.channels = 1
         self.move_horizontally = move_horizontally
         self.use_label = use_label
+        self.direction_change = log_direction_change
+        self.p = prob_direction_change # Probability of changing direction
+        if let_last_frame_after_change:
+            self.p = 1.0 - self.p #  the sequence get mirrored in the end
+        self.let_last_frame_after_change = let_last_frame_after_change
 
         self.data = datasets.MNIST(
             path,
@@ -58,6 +64,9 @@ class MovingMNIST(object):
                       image_size,
                       self.channels),
                     dtype=np.float32)
+
+        frame_idx_dir_change = []
+
         for n in range(self.num_digits):
             idx = np.random.randint(self.N)
             digit, label = self.data[idx]
@@ -65,17 +74,29 @@ class MovingMNIST(object):
             if self.move_horizontally:
                 # Starting position in the middle of the frame (both horizontally and vertically)
                 sy = (image_size - digit_size) // 2  # Fixed vertical position at the center
-                sx = np.random.randint(image_size - digit_size)  # Random horizontal starting point
-                direction = np.random.choice([-1, 1])  # Randomly choose left (-1) or right (1)
+                if self.let_last_frame_after_change:
+                    direction = np.random.choice([-1, 1], p=[1 - self.p, self.p])
+                    sx = image_size // 2 - digit_size // 2 + 4 * (- direction)  # Starting position in the middle
+                else:
+                    sx = np.random.randint(image_size - digit_size)  # Random horizontal starting point
+                    direction = np.random.choice([-1, 1], p=[1-self.p, self.p]) # Randomly choose left (-1) or right (1)
+                change_direction_last_frame = False
 
                 for t in range(self.seq_len):
                     # Update the horizontal position
+                    sx_prev = sx
                     sx += direction * 2  # Move in the chosen direction
 
                     # Check if the digit crosses the middle
-                    if (sx + digit_size // 2) == image_size // 2:
+                    crossed_middel_from_left  = (sx_prev + digit_size // 2 < image_size // 2) and (sx + digit_size // 2 >= image_size // 2)
+                    crossed_middel_from_right = (sx_prev + digit_size // 2 > image_size // 2) and (sx + digit_size // 2 <= image_size // 2)
+                    if (crossed_middel_from_left or crossed_middel_from_right) and not change_direction_last_frame:
                         # Randomly choose a new direction when crossing the middle
-                        direction = np.random.choice([-1, 1])
+                        direction = np.random.choice([-1, 1], p=[1-self.p, self.p]) # Randomly choose left (-1) or right (1)
+                        frame_idx_dir_change.append(t)  # Record the frame index
+                        change_direction_last_frame = True
+                    else:
+                        change_direction_last_frame = False
 
                     # Handle boundary conditions for horizontal movement
                     if sx < 0:
@@ -102,6 +123,7 @@ class MovingMNIST(object):
                         else:
                             dy = np.random.randint(1, 5)
                             dx = np.random.randint(-4, 5)
+                            frame_idx_dir_change.append(t)
                     elif sy >= image_size-self.digit_size:
                         sy = image_size-self.digit_size-1
                         if self.deterministic:
@@ -109,6 +131,7 @@ class MovingMNIST(object):
                         else:
                             dy = np.random.randint(-4, 0)
                             dx = np.random.randint(-4, 5)
+                            frame_idx_dir_change.append(t)
 
                     if sx < 0:
                         sx = 0
@@ -117,6 +140,7 @@ class MovingMNIST(object):
                         else:
                             dx = np.random.randint(1, 5)
                             dy = np.random.randint(-4, 5)
+                            frame_idx_dir_change.append(t)
                     elif sx >= image_size-self.digit_size:
                         sx = image_size-self.digit_size-1
                         if self.deterministic:
@@ -124,15 +148,28 @@ class MovingMNIST(object):
                         else:
                             dx = np.random.randint(-4, 0)
                             dy = np.random.randint(-4, 5)
+                            frame_idx_dir_change.append(t)
 
                     x[t, sy:sy+digit_size, sx:sx+digit_size, 0] += digit.numpy().squeeze()
                     sy += dy
                     sx += dx
 
         x[x>1] = 1.
+        # fill the list frame_idx_dir_change with zeros to match the length of the sequence
+        frame_idx_dir_change = torch.tensor(frame_idx_dir_change)
+        if self.let_last_frame_after_change:
+            x = np.flip(x,axis=0).copy() # mirror the sequence
+            frame_idx_dir_change = (self.seq_len - 1) - frame_idx_dir_change
+        # Concatenate frame_idx_dir_change with -1 filled tensor to match the sequence length
+        frame_idx_dir_change = torch.cat((frame_idx_dir_change, torch.ones(self.seq_len - len(frame_idx_dir_change)) * -1),dim=0)
+
         if self.use_label:
             labels = np.array([label]*self.seq_len)
+            if self.direction_change:
+                return x, self.make_onehot_label(torch.tensor(labels)), frame_idx_dir_change
             return x, self.make_onehot_label(torch.tensor(labels))
+        if self.direction_change:
+            return x, np.empty((1,0)), frame_idx_dir_change
         return x, np.empty((1,0))
 
     def close(self):
@@ -191,7 +228,7 @@ def main():
     seq_len = 64  # Length of the sequence
     num_digits = 1  # Number of digits to display in each sequence
     image_size = 32  # Size of the image frame
-    deterministic = True  # Whether the movement should be deterministic
+    deterministic = False  # Whether the movement should be deterministic
     digit_filter = [8]
 
     # Initialize the MovingMNIST dataset
