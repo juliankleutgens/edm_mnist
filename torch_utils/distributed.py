@@ -59,6 +59,7 @@ def print0(*args, **kwargs):
 #----------------------------------------------------------------------------
 
 import torch.distributed as dist  # Ensure this is at the top
+from torch.distributed import ReduceOp
 
 # Expose all_reduce function from torch.distributed
 def all_reduce(tensor, op=dist.ReduceOp.SUM):
