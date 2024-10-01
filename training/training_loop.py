@@ -296,13 +296,13 @@ def training_loop(
                     num_next_frames_after_direction_change = (frame_idx_dir_change - num_cond_frames + 1 >= 0).int().sum()
                     if dist.get_world_size() > 1:  # Check if we are in a multi-GPU setup
                         dist.all_reduce(num_next_frames_after_direction_change, op=dist.ReduceOp.SUM)
-                    jj = 1
-                    polt_images_highlight_direction_change(images[jj,:,:,:,0], frame_idx_dir_change[jj,:])
+                    #jj = 1
+                    #polt_images_highlight_direction_change(images[jj,:,:,:,0], frame_idx_dir_change[jj,:])
                     frames_aft_dir_change_ova += num_next_frames_after_direction_change
                     images, labels = convert_video2images_in_batch(images=images, labels=labels, use_label=use_label, num_cond_frames=num_cond_frames)
 
                     # images: [batch_gpu * seq_len, img_channels, img_h, img_w]
-                    images.to(device).to(torch.float32) * 2 - 1
+                    images = images.to(device).to(torch.float32) * 2 - 1
                 else:
                     images, labels = next(dataset_iterator)
                     images = images.to(device).to(torch.float32) / 127.5 - 1
@@ -313,7 +313,7 @@ def training_loop(
 
 
                 labels = labels.to(device)
-                images = images.to(device)
+                # images = images.to(device)
                 # images: Tensor of shape [batch_gpu, img_channels, img_resolution, img_resolution]
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe, plot_batch=False,
                                path= None, num_cond_frames=num_cond_frames)
@@ -345,7 +345,7 @@ def training_loop(
 
         # Perform maintenance tasks once per tick.
         cur_nimg += batch_size
-        done = (cur_nimg >= total_kimg * 1000)
+        done = (cur_nimg >= total_kimg * 1000) or i >= num_iterations + num_iterations*0.5
         if (not done) and (cur_tick != 0) and not i in tick_iterations and i not in snapshot_iterations:
                 continue
         #if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
