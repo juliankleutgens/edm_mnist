@@ -22,7 +22,7 @@ import time
 
 # ----------------------------- utility functions -----------------------------
 # -----------------------------------------------------------------------------
-def plot_images_with_centroids(image, centroids):
+def plot_images_with_centroids(image, centroids, local_computer=False):
     num_of_images = image.shape[0]
     fig, ax = plt.subplots(1, num_of_images, figsize=(num_of_images, 2))
 
@@ -43,7 +43,16 @@ def plot_images_with_centroids(image, centroids):
         # ax[i].scatter(0, 0, color='blue', marker='o')  # Plot centroids
         ax[i].axis('off')
 
-    plt.show()
+    t = time.localtime()
+    path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}.png")
+    plt.savefig(path)
+
+    import wandb
+    wandb.log({"generated_images": wandb.Image(path)})
+
+    if local_computer:
+        plt.show()
+    plt.close()
 
 
 def plot_images_with_centroids_reference(image, centroids, centroids_reference, indexes=None):
@@ -138,7 +147,7 @@ def plot_images(image):
         ax[i].imshow(image[0, i, :, :], cmap='gray')
         ax[i].axis('off')
     plt.show()
-
+    plt.close()
 
 def polt_images_highlight_direction_change(image, direction_change):
     from matplotlib.patches import Rectangle
@@ -153,6 +162,7 @@ def polt_images_highlight_direction_change(image, direction_change):
             ax[i].set_title('Direction Change', fontsize=8)
         ax[i].axis('off')
     plt.show()
+    plt.close()
 
 
 
@@ -196,7 +206,7 @@ def generate_images_and_save_heatmap(
 
 
     dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32, move_horizontally=True,
-                              deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False)
+                              deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
     dataset_sampler = RandomSampler(dataset_obj)
     dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=1))
@@ -208,6 +218,7 @@ def generate_images_and_save_heatmap(
 
     #centroids = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device_cpu) )
     #plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device) , centroids=centroids)
+    digit = torch.argmax(labels[0, 0, :]).item() + 1
     images = images.to(device).to(torch.float32) * 2 - 1
     idx = direction_change[:,1] - net.num_cond_frames + 1
     image = images[int(idx):int(idx)+1, :, :, :]
@@ -215,7 +226,7 @@ def generate_images_and_save_heatmap(
     centroids = calculate_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2)
     if local_computer:
         polt_images_highlight_direction_change(image_data, direction_change)
-        plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids)
+    plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids, local_computer=local_computer)
 
     #img_cent = (image * 127.5 + 128).clip(0, 255).to(torch.uint8).cpu()
 
@@ -282,7 +293,7 @@ def generate_images_and_save_heatmap(
 
     if local_computer:
         plot_images_with_centroids_reference(image=img_cat_btw_0_1, centroids=centroids_all, centroids_reference=centroids[-2:], indexes=went_to_left)
-    return result
+    return result, digit
 def generate_heatmap(image_mean, outdir,local_computer=False):
     """Generate and save a heatmap based on the mean pixel intensities of generated images."""
     plt.figure(figsize=(8, 8))
@@ -299,7 +310,7 @@ def generate_heatmap(image_mean, outdir,local_computer=False):
     wandb.log({"generated_images": wandb.Image(path)})
     if local_computer:
         plt.show()
-        plt.close()
+    plt.close()
 
 # ----------------------------- main function -----------------------------
 # -------------------------------------------------------------------------
@@ -314,14 +325,15 @@ def generate_heatmap(image_mean, outdir,local_computer=False):
 @click.option('--sigma_min', help='Lowest noise level', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True),
               default=0.002)
 @click.option('--sigma_max', help='Highest noise level', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True),
-              default=20)
+              default=8)
 @click.option('--s_churn', help='Stochasticity strength', metavar='FLOAT', type=click.FloatRange(min=0), default=0.5,
               show_default=True)
 @click.option('--rho', help='Time step exponent', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True),
               default=7)
 @click.option('--local_computer', help='Use local computer', is_flag=True)
 @click.option('--true_probability', help='True probability of going to right', metavar='FLOAT', type=float, default=None)
-@click.option('--num_seq', help='Number of sequences', metavar='INT', type=click.IntRange(min=1), default=2)
+@click.option('--num_seq', help='Number of sequences', metavar='INT', type=click.IntRange(min=1),
+              default=11)
 @click.option('--moving_mnist_path', help='Path to the moving mnist dataset', metavar='STR', type=str, required=True)
 
 def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,moving_mnist_path,
@@ -349,8 +361,9 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                          "num_steps": num_steps, "sigma_min": sigma_min, "sigma_max": sigma_max, "S_churn": s_churn, "rho": rho,
                          "local_computer": local_computer, "device": device})
 
+    digit_prob = {str(i): [] for i in range(10)}
     for i in tqdm(range(num_seq), desc="Generating images"):
-        result = generate_images_and_save_heatmap(
+        result, digit = generate_images_and_save_heatmap(
             network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
             num_steps=num_steps,
             sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path
@@ -368,7 +381,14 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         wandb.log({"cumulative_prob_less": cum_prob})
         wandb.log({"result": result})
         wandb.log({"Mean": np.mean(np.array(results))})
+
+
         results.append(result)
+        try:
+            digit_prob[str(digit)].append(result)
+        except KeyError:
+            print(f"KeyError: {digit}")
+            continue
 
 
 
@@ -383,10 +403,29 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     import scipy.stats as stats
 
     # calculate the mean, median, and variance of the results
+    print(f"Prob for eachd igit: {digit_prob}")
     print(f"Results: {results}")
     print(f"Mean: {mean_value}")
     print(f"Median: {median_value}")
     print(f"Variance: {variance}")
+
+    try:
+        plt.figure(figsize=(10, 6))
+
+        for key, values in digit_prob.items():
+            plt.plot(values, label=f'Digit {key}')
+        plt.xlabel('Index')
+        plt.ylabel('Value')
+        plt.title('Random Values for Each Digit')
+        plt.legend()
+        # save the plt
+        t = time.localtime()
+        path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}.png")
+        plt.savefig(path)
+        wandb.log({"final image overview": wandb.Image(path)})
+    except Exception as e:
+        print(f"Error: {e}")
+
 
 
 if __name__ == "__main__":
