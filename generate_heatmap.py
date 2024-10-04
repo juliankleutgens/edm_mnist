@@ -108,7 +108,7 @@ class StackedRandomGenerator:
 
 def calculate_centroids(image):
     # Convert the image tensor to NumPy array (if necessary)
-    image_np = image.numpy() if hasattr(image, 'numpy') else image
+    image_np = image.cpu().numpy() if hasattr(image, 'numpy') else image.cpu()
 
     # Get the number of images
     num_of_images = image_np.shape[0]
@@ -162,9 +162,8 @@ def polt_images_highlight_direction_change(image, direction_change):
 # ----------------------------- generating function -----------------------------
 # ------------------------------------------------------------------------------
 def generate_images_and_save_heatmap(
-        network_pkl, outdir, num_images=100, max_batch_size=1, num_steps=18,
-        sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
-):
+        network_pkl, outdir, moving_mnist_path, num_images=100, max_batch_size=1, num_steps=18,
+        sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
 
 
@@ -196,7 +195,7 @@ def generate_images_and_save_heatmap(
         net = pickle.load(f)['ema'].to(device)
 
 
-    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=32, num_digits=1, image_size=32, move_horizontally=True,
+    dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32, move_horizontally=True,
                               deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
     dataset_sampler = RandomSampler(dataset_obj)
@@ -302,9 +301,6 @@ def generate_heatmap(image_mean, outdir,local_computer=False):
         plt.show()
         plt.close()
 
-
-
-
 # ----------------------------- main function -----------------------------
 # -------------------------------------------------------------------------
 @click.command()
@@ -326,8 +322,9 @@ def generate_heatmap(image_mean, outdir,local_computer=False):
 @click.option('--local_computer', help='Use local computer', is_flag=True)
 @click.option('--true_probability', help='True probability of going to right', metavar='FLOAT', type=float, default=None)
 @click.option('--num_seq', help='Number of sequences', metavar='INT', type=click.IntRange(min=1), default=2)
+@click.option('--moving_mnist_path', help='Path to the moving mnist dataset', metavar='STR', type=str, required=True)
 
-def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,
+def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,moving_mnist_path,
          local_computer, true_probability=None, num_seq=1):
     device = torch.device('cpu' if local_computer else 'cuda')
     results = []
@@ -356,7 +353,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         result = generate_images_and_save_heatmap(
             network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
             num_steps=num_steps,
-            sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device
+            sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path
         )
         k = num_images * result
         cumulative_prob_less = binom.cdf(k, num_images, p_true)
