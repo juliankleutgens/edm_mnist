@@ -7,8 +7,9 @@ class MovingMNIST(object):
 
     """Data Handler that creates Bouncing MNIST dataset on the fly."""
 
-    def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True, digit_filter=None, move_horizontally=False,
-                 use_label=False, step_length=0.1, log_direction_change=False, prob_direction_change=0.5, let_last_frame_after_change=True):
+    def __init__(self, train, data_root, seq_len=20, num_digits=2, image_size=64, deterministic=True, digit_filter=None, mode='free',
+                 use_label=False, step_length=0.1, log_direction_change=False, prob_direction_change=0, let_last_frame_after_change=True
+                 ,num_of_directions_in_circle=8):
         path = data_root
         self.seq_len = seq_len
         self.num_digits = num_digits
@@ -19,13 +20,20 @@ class MovingMNIST(object):
         self.seed_is_set = False # multi threaded loading
         self.digit_filter = digit_filter
         self.channels = 1
-        self.move_horizontally = move_horizontally
+        self.mode = mode # there are three modes: free, horizontal, and circle
         self.use_label = use_label
         self.direction_change = log_direction_change
         self.p = prob_direction_change # Probability of changing direction
-        if let_last_frame_after_change:
-            self.p = 1.0 - self.p #  the sequence get mirrored in the end
+        if let_last_frame_after_change and mode == 'horizontal':
+            self.p = 1.0 - self.p # the sequence get mirrored in the end
+        if mode == 'horizontal' and self.p == 0:
+            self.p = 0.5
+            print("Attention: prob_direction_change is set to 0.5 for horizontal mode")
+
         self.let_last_frame_after_change = let_last_frame_after_change
+        if num_of_directions_in_circle not in [4, 8]:
+            raise ValueError("num_of_directions_in_circle must be 4 or 8")
+        self.num_of_directions = num_of_directions_in_circle
 
         self.data = datasets.MNIST(
             path,
@@ -71,88 +79,14 @@ class MovingMNIST(object):
             idx = np.random.randint(self.N)
             digit, label = self.data[idx]
             # If move_horizontally is True, apply the middle-crossing behavior
-            if self.move_horizontally:
-                # Starting position in the middle of the frame (both horizontally and vertically)
-                sy = (image_size - digit_size) // 2  # Fixed vertical position at the center
-                if self.let_last_frame_after_change:
-                    direction = np.random.choice([-1, 1], p=[1 - self.p, self.p])
-                    sx = image_size // 2 - digit_size // 2 + 4 * (- direction)  # Starting position in the middle
-                else:
-                    sx = np.random.randint(image_size - digit_size)  # Random horizontal starting point
-                    direction = np.random.choice([-1, 1], p=[1-self.p, self.p]) # Randomly choose left (-1) or right (1)
-                change_direction_last_frame = False
-
-                for t in range(self.seq_len):
-                    # Update the horizontal position
-                    sx_prev = sx
-                    sx += direction * 2  # Move in the chosen direction
-
-                    # Check if the digit crosses the middle
-                    crossed_middel_from_left  = (sx_prev + digit_size // 2 < image_size // 2) and (sx + digit_size // 2 >= image_size // 2)
-                    crossed_middel_from_right = (sx_prev + digit_size // 2 > image_size // 2) and (sx + digit_size // 2 <= image_size // 2)
-                    if (crossed_middel_from_left or crossed_middel_from_right) and not change_direction_last_frame:
-                        # Randomly choose a new direction when crossing the middle
-                        direction = np.random.choice([-1, 1], p=[1-self.p, self.p]) # Randomly choose left (-1) or right (1)
-                        frame_idx_dir_change.append(t)  # Record the frame index
-                        change_direction_last_frame = True
-                    else:
-                        change_direction_last_frame = False
-
-                    # Handle boundary conditions for horizontal movement
-                    if sx < 0:
-                        sx = 0
-                        direction = 1  # Force movement to the right when hitting the left boundary
-                    elif sx >= image_size - digit_size:
-                        sx = image_size - digit_size - 1
-                        direction = -1  # Force movement to the left when hitting the right boundary
-
-                    # Only sx (horizontal) is updated; sy (vertical) remains constant
-                    x[t, sy:sy + digit_size, sx:sx + digit_size, 0] += digit.numpy().squeeze()
-
-            # Otherwise, use the original free movement behavior
+            if 'horizontal' in self.mode:
+                x, frame_idx_dir_change = self._move_horizontally(digit, x, frame_idx_dir_change)
+            elif 'circle' in self.mode:
+                x, frame_idx_dir_change = self.jump_randomly_in_eight_directions_back_and_forth(digit, x, frame_idx_dir_change)
+            elif  'free' in self.mode:
+                x, frame_idx_dir_change = self._move_free(digit, x, frame_idx_dir_change)
             else:
-                sx = np.random.randint(image_size-digit_size)
-                sy = np.random.randint(image_size-digit_size)
-                dx = np.random.randint(-4, 5)
-                dy = np.random.randint(-4, 5)
-                for t in range(self.seq_len):
-                    if sy < 0:
-                        sy = 0
-                        if self.deterministic:
-                            dy = -dy
-                        else:
-                            dy = np.random.randint(1, 5)
-                            dx = np.random.randint(-4, 5)
-                            frame_idx_dir_change.append(t)
-                    elif sy >= image_size-self.digit_size:
-                        sy = image_size-self.digit_size-1
-                        if self.deterministic:
-                            dy = -dy
-                        else:
-                            dy = np.random.randint(-4, 0)
-                            dx = np.random.randint(-4, 5)
-                            frame_idx_dir_change.append(t)
-
-                    if sx < 0:
-                        sx = 0
-                        if self.deterministic:
-                            dx = -dx
-                        else:
-                            dx = np.random.randint(1, 5)
-                            dy = np.random.randint(-4, 5)
-                            frame_idx_dir_change.append(t)
-                    elif sx >= image_size-self.digit_size:
-                        sx = image_size-self.digit_size-1
-                        if self.deterministic:
-                            dx = -dx
-                        else:
-                            dx = np.random.randint(-4, 0)
-                            dy = np.random.randint(-4, 5)
-                            frame_idx_dir_change.append(t)
-
-                    x[t, sy:sy+digit_size, sx:sx+digit_size, 0] += digit.numpy().squeeze()
-                    sy += dy
-                    sx += dx
+                raise ValueError("mode must be one of 'horizontal', 'circle', or 'free'")
 
         x[x>1] = 1.
         # fill the list frame_idx_dir_change with zeros to match the length of the sequence
@@ -190,6 +124,127 @@ class MovingMNIST(object):
     def num_channels(self):
         return self.channels
 
+    def _move_free(self, digit, x, frame_idx_dir_change):
+        image_size = self.image_size
+        digit_size = self.digit_size
+        sx = np.random.randint(image_size - digit_size)
+        sy = np.random.randint(image_size - digit_size)
+        dx = np.random.randint(-4, 5)
+        dy = np.random.randint(-4, 5)
+
+        for t in range(self.seq_len):
+            if sy < 0:
+                sy = 0
+                dy = -dy if self.deterministic else np.random.randint(1, 5)
+                dx = np.random.randint(-4, 5)
+                frame_idx_dir_change.append(t)
+            elif sy >= image_size - digit_size:
+                sy = image_size - digit_size - 1
+                dy = -dy if self.deterministic else np.random.randint(-4, 0)
+                dx = np.random.randint(-4, 5)
+                frame_idx_dir_change.append(t)
+
+            if sx < 0:
+                sx = 0
+                dx = -dx if self.deterministic else np.random.randint(1, 5)
+                dy = np.random.randint(-4, 5)
+                frame_idx_dir_change.append(t)
+            elif sx >= image_size - digit_size:
+                sx = image_size - digit_size - 1
+                dx = -dx if self.deterministic else np.random.randint(-4, 0)
+                dy = np.random.randint(-4, 5)
+                frame_idx_dir_change.append(t)
+
+            x[t, sy:sy + digit_size, sx:sx + digit_size, 0] += digit.numpy().squeeze()
+            sy += dy
+            sx += dx
+
+        return x, frame_idx_dir_change
+
+    def _move_horizontally(self, digit, x, frame_idx_dir_change):
+        image_size = self.image_size
+        digit_size = self.digit_size
+        sy = (image_size - digit_size) // 2
+        sx = np.random.randint(image_size - digit_size) if not self.let_last_frame_after_change else image_size // 2 - digit_size // 2 + 4 * (-np.random.choice([-1, 1], p=[1 - self.p, self.p]))
+        direction = np.random.choice([-1, 1], p=[1 - self.p, self.p])
+        change_direction_last_frame = False
+
+        for t in range(self.seq_len):
+            sx_prev = sx
+            sx += direction * 2
+
+            if ((sx_prev + digit_size // 2 < image_size // 2 and sx + digit_size // 2 >= image_size // 2) or
+                (sx_prev + digit_size // 2 > image_size // 2 and sx + digit_size // 2 <= image_size // 2)) and not change_direction_last_frame:
+                direction = np.random.choice([-1, 1], p=[1 - self.p, self.p])
+                frame_idx_dir_change.append(t)
+                change_direction_last_frame = True
+            else:
+                change_direction_last_frame = False
+
+            if sx < 0:
+                sx = 0
+                direction = 1
+            elif sx >= image_size - digit_size:
+                sx = image_size - digit_size - 1
+                direction = -1
+
+            x[t, sy:sy + digit_size, sx:sx + digit_size, 0] += digit.numpy().squeeze()
+
+        return x, frame_idx_dir_change
+
+    def jump_randomly_in_eight_directions_back_and_forth(self, digit, x, frame_idx_dir_change):
+        """Make the digit jump in 8 directions clockwise, then back to the center."""
+        image_size = self.image_size
+        digit_size = self.digit_size
+
+        cx = (image_size - digit_size) // 2
+        cy = (image_size - digit_size) // 2
+        step = 4
+
+        # 8 directions in clockwise order
+        if self.num_of_directions == 8:
+            directions = np.array([
+                [-1, 0] ,   # Up
+                [-1, 1],   # Up-right
+                [0, 1],    # Right
+                [1, 1],    # Down-right
+                [1, 0],    # Down
+                [1, -1],   # Down-left
+                [0, -1],   # Left
+                [-1, -1]   # Up-left
+            ])
+        elif self.num_of_directions == 4:
+            directions = np.array([
+                [-1, 0],  # Up
+                [0, 1],   # Right
+                [1, 0],   # Down
+                [0, -1]   # Left
+            ])
+        elif self.num_of_directions == 2:
+            directions = np.array([
+                [0, 1],   # Right#
+                [0, -1]   # Left
+            ])
+
+        for t in range(self.seq_len):
+            x[t, cy:cy + digit_size, cx:cx + digit_size, 0] += digit.numpy().squeeze()
+            if t % 2 == 0:
+                if self.p == 0:
+                    random_direction = np.random.randint(self.num_of_directions)
+                else:
+                    random_direction = np.random.choice(self.num_of_directions, p=[self.p] + [(1 - self.p)/(self.num_of_directions-1)] * (self.num_of_directions - 1))
+
+                direction = directions[random_direction]
+                dx = direction[0] * step
+                dy = direction[1] * step
+                frame_idx_dir_change.append(t)
+            else:
+                dx = -direction[0] * step
+                dy = -direction[1] * step
+            cx += dx
+            cy += dy
+        return x, frame_idx_dir_change
+
     @property
     def resolution(self):
         return self.image_size
@@ -225,18 +280,19 @@ def main():
     # Define the parameters for the MovingMNIST dataset
     train = True  # Set to False if you want to use the test set
     data_root = './data'  # The directory where the MNIST data will be downloaded
-    seq_len = 64  # Length of the sequence
+    seq_len = 10  # Length of the sequence
     num_digits = 1  # Number of digits to display in each sequence
     image_size = 32  # Size of the image frame
     deterministic = False  # Whether the movement should be deterministic
     digit_filter = [8]
 
     # Initialize the MovingMNIST dataset
-    moving_mnist = MovingMNIST(train, data_root, seq_len, num_digits, image_size, deterministic, digit_filter=digit_filter, move_horizontally=True)
+    moving_mnist = MovingMNIST(train, data_root, seq_len, num_digits, image_size, deterministic, digit_filter=digit_filter, mode='circle'
+                                 , use_label=True, log_direction_change=True, prob_direction_change=0.3, let_last_frame_after_change=False)
 
     # Sample an item from the dataset
     sample_index = 0  # Index of the sample to visualize
-    sample, label = moving_mnist[sample_index]
+    sample, label, _ = moving_mnist[sample_index]
 
     # Visualize the sampled sequence
     fig, axes = plt.subplots(1, seq_len, figsize=(seq_len, 2))

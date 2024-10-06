@@ -160,7 +160,10 @@ def training_loop(
         'move_horizontally': moving_mnist.get('move_horizontally', False),
         'use_labels': moving_mnist.get('use_labels', False),
         'let_last_frame_after_change': moving_mnist.get('let_last_frame_after_change', False),
-        'prob_direction_change': moving_mnist.get('prob_direction_change', 0.5),
+        'prob_direction_change': moving_mnist.get('prob_direction_change', 0),
+        'mode': moving_mnist.get('mode', 'free'),
+        'num_direction_circle': moving_mnist.get('num_direction_circle', 8),
+
     })
 
     # Initialize.
@@ -201,9 +204,10 @@ def training_loop(
         image_size=32
         dataset_obj = MovingMNIST(train=True, data_root=moving_mnist.get('moving_mnist_path', './data'),
                                   seq_len=seq_len, num_digits=1, image_size=image_size, deterministic=False,
-                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False), move_horizontally=moving_mnist.get('move_horizontally', False),
+                                  digit_filter=digit_filter, use_label=moving_mnist.get('use_labels', False), mode=moving_mnist.get('mode', 'free'),
                                   log_direction_change=True, let_last_frame_after_change=moving_mnist.get('let_last_frame_after_change', False),
-                                  prob_direction_change=moving_mnist.get('prob_direction_change', 0.5))
+                                  prob_direction_change=moving_mnist.get('prob_direction_change', 0), num_of_directions_in_circle=moving_mnist.get('num_direction_circle', 8),)
+
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//(seq_len-num_cond_frames), **data_loader_kwargs))
         if num_cond_frames > 0:

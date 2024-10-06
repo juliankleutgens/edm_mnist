@@ -318,7 +318,7 @@ def generate_heatmap(image_mean, outdir,local_computer=False):
 @click.option('--network', 'network_pkl', help='Network pickle filename', metavar='PATH|URL', type=str, required=True)
 @click.option('--outdir', help='Where to save the output images and heatmap', metavar='DIR', type=str, required=True)
 @click.option('--num_images', help='Number of images to generate', metavar='INT', type=click.IntRange(min=1),
-              default=2)
+              default=30)
 @click.option('--max_batch_size', help='Maximum batch size', metavar='INT', type=click.IntRange(min=1), default=8)
 @click.option('--steps', 'num_steps', help='Number of sampling steps', metavar='INT', type=click.IntRange(min=1),
               default=22)
@@ -378,7 +378,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
             print(f"The cumulative probability of going to right less than {k} times is: {cumulative_prob_less}")
             cum_prob = cumulative_prob_less
         # log to wandb
-        wandb.log({"cumulative_prob_less": cum_prob})
+        wandb.log({"cumulative_prob": cum_prob})
         wandb.log({"result": result})
         wandb.log({"Mean": np.mean(np.array(results))})
 
