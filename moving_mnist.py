@@ -31,8 +31,8 @@ class MovingMNIST(object):
             print("Attention: prob_direction_change is set to 0.5 for horizontal mode")
 
         self.let_last_frame_after_change = let_last_frame_after_change
-        if num_of_directions_in_circle not in [4, 8]:
-            raise ValueError("num_of_directions_in_circle must be 4 or 8")
+        if num_of_directions_in_circle not in [2, 4, 8]:
+            raise ValueError("num_of_directions_in_circle must be 2, 4 or 8")
         self.num_of_directions = num_of_directions_in_circle
 
         self.data = datasets.MNIST(
@@ -204,26 +204,26 @@ class MovingMNIST(object):
         # 8 directions in clockwise order
         if self.num_of_directions == 8:
             directions = np.array([
-                [-1, 0] ,   # Up
-                [-1, 1],   # Up-right
-                [0, 1],    # Right
-                [1, 1],    # Down-right
-                [1, 0],    # Down
-                [1, -1],   # Down-left
-                [0, -1],   # Left
-                [-1, -1]   # Up-left
+                [-1, 0] ,  # left
+                [-1, 1],   # down-left
+                [0, 1],    # down
+                [1, 1],    # down-right
+                [1, 0],    # right
+                [1, -1],   # up-right
+                [0, -1],   # up
+                [-1, -1]   # up left
             ])
         elif self.num_of_directions == 4:
             directions = np.array([
-                [-1, 0],  # Up
-                [0, 1],   # Right
-                [1, 0],   # Down
-                [0, -1]   # Left
+                [-1, 0],  # left
+                [0, 1],   # down
+                [1, 0],   # right
+                [0, -1]   # up
             ])
         elif self.num_of_directions == 2:
             directions = np.array([
-                [0, 1],   # Right#
-                [0, -1]   # Left
+                [0, 1],   # Down
+                [0, -1]   # Up
             ])
 
         for t in range(self.seq_len):

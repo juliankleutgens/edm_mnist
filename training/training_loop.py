@@ -63,10 +63,10 @@ def polt_images_highlight_direction_change(image, direction_change):
 def print_gpu_memory():
     if torch.cuda.is_available():
         for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-            print(f"  Allocated: {torch.cuda.memory_allocated(i) / 1024 ** 2:.2f} MB")
-            print(f"  Cached:    {torch.cuda.memory_reserved(i) / 1024 ** 2:.2f} MB")
-            print("-" * 30)
+            dist.print0(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+            dist.print0(f"  Allocated: {torch.cuda.memory_allocated(i) / 1024 ** 2:.2f} MB")
+            dist.print0(f"  Cached:    {torch.cuda.memory_reserved(i) / 1024 ** 2:.2f} MB")
+            dist.print0("-" * 30)
 
 
 class ModelWrapper(torch.nn.Module):
@@ -176,16 +176,16 @@ def training_loop(
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
 
     # Select batch size per GPU.
-    print(f"batch_size: {batch_size}, world_size: {dist.get_world_size()}")
+    dist.print0(f"batch_size: {batch_size}, world_size: {dist.get_world_size()}")
     batch_gpu_total = batch_size // dist.get_world_size()
     if batch_gpu is None or batch_gpu > batch_gpu_total:
         batch_gpu = batch_gpu_total
     num_accumulation_rounds = batch_gpu_total // batch_gpu
-    print(
+    dist.print0(
         f"batch_size: {batch_size}, batch_gpu: {batch_gpu}, num_accumulation_rounds: {num_accumulation_rounds}, world_size: {dist.get_world_size()}")
     if mnist and num_cond_frames > 0:
-        print(f"the batchsize for the GPU should be: {batch_size_set} (bs) * ({seq_len} (seq_len) - {num_cond_frames} (num_cond_frames)) = {batch_size}")
-        print(
+        dist.print0(f"the batchsize for the GPU should be: {batch_size_set} (bs) * ({seq_len} (seq_len) - {num_cond_frames} (num_cond_frames)) = {batch_size}")
+        dist.print0(
             f"batch_gpu: {batch_gpu} == batch_size: {batch_size} // num_gpus: {dist.get_world_size()} // num_accumulation_rounds: {num_accumulation_rounds}")
     assert batch_size == batch_gpu * num_accumulation_rounds * dist.get_world_size()
 
@@ -211,7 +211,7 @@ def training_loop(
         dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(),num_replicas=dist.get_world_size(), seed=seed)
         dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu//(seq_len-num_cond_frames), **data_loader_kwargs))
         if num_cond_frames > 0:
-            print(
+            dist.print0(
                 f"The Batchsize for the Moving MNIST with Conditional frames: {batch_size_set} (bs) * ({seq_len} (seq_len) - {num_cond_frames} (num_cond_frames)) = {batch_size}")
         else:
             dist.print0(f'The Batchsize for the Moving MNIST is: bs {batch_size_set} (bs) * {seq_len} (seq_len) = {batch_size}')
@@ -355,7 +355,7 @@ def training_loop(
         #if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
 
 
-        # Print status line, accumulating the same information in training_stats.
+        # dist.print0 status line, accumulating the same information in training_stats.
         tick_end_time = time.time()
         fields = []
         fields += [f"tick {training_stats.report0('Progress/tick', cur_tick):<5d}"]
@@ -386,7 +386,7 @@ def training_loop(
 
         # Save network snapshot.
         if (snapshot_ticks is not None) and (done or i in snapshot_iterations)  and cur_tick != 0:
-            print(f"Saving snapshot at tick {cur_tick} and iteration {i}")
+            dist.print0(f"Saving snapshot at tick {cur_tick} and iteration {i}")
             data = dict(ema=ema, loss_fn=loss_fn, augment_pipe=augment_pipe, dataset_kwargs=dict(dataset_kwargs))
             for key, value in data.items():
                 if isinstance(value, torch.nn.Module):
@@ -398,7 +398,7 @@ def training_loop(
                 snapshot_path = os.path.join(run_dir, f'network-snapshot-{i}.pkl')
                 with open(os.path.join(run_dir, f'network-snapshot-{i}.pkl'), 'wb') as f:
                     pickle.dump(data, f)
-                print(f"Snapshot saved at {snapshot_path}")
+                dist.print0(f"Snapshot saved at {snapshot_path}")
                 wandb.save(snapshot_path)  # Log snapshot to W&B
             if generate_images:
                 try:
@@ -407,7 +407,7 @@ def training_loop(
                         class_idx = np.random.randint(0, dataset_obj.label_dim)
                     else:
                         class_idx = None
-                    print(f"Generating images at tick {cur_tick} and iteration {i}")
+                    dist.print0(f"Generating images at tick {cur_tick} and iteration {i}")
 
                     data, labels, frame_idx_dir_change = next(dataset_iterator)
                     images, labels = convert_video2images_in_batch(images=data, labels=labels, use_label=use_label,
@@ -429,9 +429,9 @@ def training_loop(
                                      net=net,
                                      image=image,
                                      )
-                    print(f"Generated images in {time.time() - t:.2f} seconds")
+                    dist.print0(f"Generated images in {time.time() - t:.2f} seconds")
                 except Exception as e:
-                    print(f"Error generating images: {e}")
+                    dist.print0(f"Error generating images: {e}")
             del data  # conserve memory
 
         # Save full dump of the training state.

@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 from moving_mnist import MovingMNIST  # Assuming you have a MovingMNIST loader
 from torch.utils.data import DataLoader
 from torch_utils.utility import convert_video2images_in_batch
+from torch.utils.data import RandomSampler
+import math
 
 def plot_curve_of_t_steps(sigma_min, sigma_max, rho, num_steps, net, latents):
     # Time step discretization.
@@ -53,11 +55,32 @@ def plot_gamma(gamma_arr, S_churn):
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
 
+def compute_particle_guidance_grad(xs):
+    with torch.enable_grad():
+        xs = (xs.detach().clone() + 1) * 0.5  # transform from value range [-1,1] to [0,1]
+        xs.requires_grad = True
+        n = xs.shape[0]
+
+        # Compute matrix of L2 distances
+        distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
+
+        # Only consider upper triangular distance matrix, rest are duplicate entries or distance to self
+        triu_indices = torch.triu_indices(n, n, offset=1)
+        distance_list = distance_matrix[triu_indices[0], triu_indices[1]]
+
+        # Normalizing factor
+        h_t = distance_list.median() ** 2 / math.log(n)
+        # Sum of RBF kernels
+        rbf_sum = (-distance_list / h_t).exp().sum()
+        rbf_sum.backward()
+
+        return xs.grad
+
 def edm_sampler(
     net, latents, class_labels=None, randn_like=torch.randn_like,
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
     S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False,
-    plot_diffusion=False, image=None
+    plot_diffusion=False, image=None, particle_guidance_factor=0,
 ):
     # Adjust noise levels based on what's supported by the network.
     if net.num_cond_frames > 0:
@@ -77,6 +100,7 @@ def edm_sampler(
     intermediate_denoised = []
     intermediate_denoised_prime = []
     intermediate_direction_cur = []
+    particle_guidance_grad_images = []
 
 
 
@@ -100,7 +124,10 @@ def edm_sampler(
 
         # Euler step.
         denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
-        d_cur = (x_hat - denoised) / t_hat
+        #d_cur = (x_hat - denoised) / t_hat
+        particle_guidance_grad = particle_guidance_factor * t_cur * compute_particle_guidance_grad(denoised)
+        d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
+
         x_next = x_hat + (t_next - t_hat) * d_cur
 
         # Apply 2nd order correction.
@@ -128,12 +155,16 @@ def edm_sampler(
             prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
 
+            particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
+
 
     if plot_diffusion:
-        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
-   #     plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
+        plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
+        plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
         plot_diffusion_process_conditional(intermediate_images, images=image)
-        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
+        plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
+        plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
     #plot_gamma(gamma_arr, S_churn)
     return x_next, intermediate_images
 
@@ -460,15 +491,23 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
     if dist.get_rank() == 0:
         torch.distributed.barrier()
 
-    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=5, num_digits=1, image_size=32, deterministic=False)
+    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=32, num_digits=1, image_size=32, mode='horizontal',
+                              deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
-    dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=max_batch_size))
-    image, labels = next(dataset_iterator)
-    image = image.to(device)
-    images, labels = convert_video2images_in_batch(images=image, labels=labels, use_label=False,
+    dataset_sampler = RandomSampler(dataset_obj)
+    dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=1))
+    image_data, labels, direction_change = next(dataset_iterator)
+    image_seq = image_data.to(device)
+    image_seq1 = image_seq[:,:,:,:,0]
+    images, labels = convert_video2images_in_batch(images=image_seq, labels=labels, use_label=False,
                                                    num_cond_frames=net.num_cond_frames)
+
+    #centroids = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device_cpu) )
+    #plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device) , centroids=centroids)
+    digit = torch.argmax(labels[0, 0, :]).item() + 1
     images = images.to(device).to(torch.float32) * 2 - 1
-    image = images[:1, :, :, :]
+    idx = direction_change[:,1] - net.num_cond_frames + 1
+    image = images[int(idx):int(idx)+1, :, :, :]
 
     # Loop over batches.
     dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')
