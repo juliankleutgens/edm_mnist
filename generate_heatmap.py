@@ -298,7 +298,10 @@ def generate_images_and_save_heatmap(
     centroids = calculate_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2)
     if local_computer:
         polt_images_highlight_direction_change(image_data, direction_change)
-    plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids, local_computer=local_computer)
+    try:
+        plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids, local_computer=local_computer)
+    except Exception as e:
+        print(f"Error: {e}")
 
     #img_cent = (image * 127.5 + 128).clip(0, 255).to(torch.uint8).cpu()
 
