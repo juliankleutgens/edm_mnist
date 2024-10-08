@@ -266,8 +266,7 @@ def generate_images_and_save_heatmap(
     if dist.get_rank() == 0:
         torch.distributed.barrier()
 
-
-    # Initialize the MovingMNIST dataset
+    # ------------------- Initialize the MovingMNIST dataset -------------------
     device_cpu = torch.device('cpu')
     with dnnlib.util.open_url(network_pkl) as f:
         net = pickle.load(f)['ema'].to(device)
@@ -284,6 +283,9 @@ def generate_images_and_save_heatmap(
     images, labels = convert_video2images_in_batch(images=image_seq, labels=labels, use_label=False,
                                                    num_cond_frames=net.num_cond_frames)
 
+
+
+    # ------------------- plot the images with the centroids  -------------------
     if False:
         centroids = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device_cpu))
         plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device) , centroids=centroids, local_computer=local_computer)
@@ -330,6 +332,7 @@ def generate_images_and_save_heatmap(
         ])
 
     # Store sum of images for the heatmap
+    #
     image_sum = None
     j = 0
     generated_images = []
@@ -337,7 +340,7 @@ def generate_images_and_save_heatmap(
         iterator = tqdm(rank_batches, unit='batch', disable=(dist.get_rank() != 0))
     else:
         iterator = rank_batches
-
+    #  ------------------------- for loop to generate the images -------------------------
     for batch_seeds in iterator:
         torch.distributed.barrier()
         batch_size = len(batch_seeds)
@@ -374,7 +377,10 @@ def generate_images_and_save_heatmap(
     if image_sum.ndim  == 2:
         image_sum = np.expand_dims(image_sum, axis=0)
     image_mean = image_sum / num_images
-    generate_heatmap(image_mean, outdir, local_computer=local_computer)
+    try:
+        generate_heatmap(image_mean, outdir, local_computer=local_computer)
+    except Exception as e:
+        print(f"Error: {e}")
 
 
     centroids_all = calculate_centroids(image=img_cat_btw_0_1)
