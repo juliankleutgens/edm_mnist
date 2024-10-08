@@ -241,7 +241,7 @@ def polt_images_highlight_direction_change(image, direction_change):
 def generate_images_and_save_heatmap(
         network_pkl, outdir, moving_mnist_path, num_images=100, max_batch_size=1, num_steps=18,
         sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
-        ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0):
+        ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
 
 
@@ -273,7 +273,7 @@ def generate_images_and_save_heatmap(
 
     dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32, mode=mode,
                               deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True,
-                              num_of_directions_in_circle=num_of_directions,)
+                              num_of_directions_in_circle=num_of_directions,digit_filter=None)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
     dataset_sampler = RandomSampler(dataset_obj)
     dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=1))
@@ -444,9 +444,10 @@ def generate_images_and_save_heatmap(
 @click.option('--mode', help='Mode of the moving mnist dataset: free, circle, horizontal', metavar='STR', type=str, default='horizontal')
 @click.option('--moving_mnist_path', help='Path to the moving mnist dataset', metavar='STR', type=str, required=True)
 @click.option('--particle_guidance_factor', help='Particle guidance factor', metavar='FLOAT', type=click.FloatRange(min=0), default=0)
+@click.option('--digit_filter', help='Filter the digit to generate', metavar='INT', type=int, default=None)
 
 def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,moving_mnist_path,
-         local_computer, true_probability=None, num_seq=1, mode='horizontal', num_of_directions=2, particle_guidance_factor=0):
+         local_computer, true_probability=None, num_seq=1, mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None):
     device = torch.device('cpu' if local_computer else 'cuda')
     results = []
     mean_uniform = []
@@ -467,7 +468,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
             network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
             num_steps=num_steps, mode=mode, num_of_directions=num_of_directions,
             sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path,
-            particle_guidance_factor=particle_guidance_factor
+            particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter
         )
         if not 0 in prob_estimated:
             prob_estimated[0] = 0
