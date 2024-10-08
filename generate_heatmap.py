@@ -273,7 +273,7 @@ def generate_images_and_save_heatmap(
 
     dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32, mode=mode,
                               deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True,
-                              num_of_directions_in_circle=num_of_directions,digit_filter=None)
+                              num_of_directions_in_circle=num_of_directions,digit_filter=digit_filter)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
     dataset_sampler = RandomSampler(dataset_obj)
     dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=1))
@@ -471,7 +471,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
             network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
             num_steps=num_steps, mode=mode, num_of_directions=num_of_directions,
             sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path,
-            particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter
+            particle_guidance_factor=particle_guidance_factor, digit_filter=[digit_filter]
         )
         if not 0 in prob_estimated:
             prob_estimated[0] = 0
@@ -489,12 +489,13 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                 cum_prob = cumulative_prob_less
             # log to wandb
             wandb.log({"cumulative_prob": cum_prob})
+            wandb.log({"Probability of going to right": prob_estimated[0]})
         wandb.log({"Mean": np.mean(np.array(results))})
 
         if mode == 'circle' and num_of_directions == 4 or num_of_directions == 8:
             direction_mapping = get_direction_mapping(num_of_directions)
             mean_uniform.append(np.mean([value for key, value in prob_estimated.items() if key != 0]))
-            wandb.log({f"Mean of the other directions which are uniformed, should: {1-p_true}": np.mean(mean_uniform)})
+            wandb.log({f"Mean of the other directions which are uniformed, should: {((1-p_true)/(num_of_directions-1)):.2f}": np.mean(mean_uniform)})
 
             prob_estimated_with_directions = {direction_mapping[k]: v for k, v in prob_estimated.items()}
             wandb.log(prob_estimated_with_directions)
