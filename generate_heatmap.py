@@ -271,9 +271,9 @@ def generate_images_and_save_heatmap(
     with dnnlib.util.open_url(network_pkl) as f:
         net = pickle.load(f)['ema'].to(device)
 
-    dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32, mode='circle',
+    dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32, mode=mode,
                               deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True,
-                              num_of_directions_in_circle=2)
+                              num_of_directions_in_circle=num_of_directions,)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
     dataset_sampler = RandomSampler(dataset_obj)
     dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=1))
