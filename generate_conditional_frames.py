@@ -62,10 +62,11 @@ def compute_particle_guidance_grad(xs):
         n = xs.shape[0]
 
         # Compute matrix of L2 distances
+        #  xs.flatten(1).shape = torch.Size([8, 1024])
         distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
 
         # Only consider upper triangular distance matrix, rest are duplicate entries or distance to self
-        triu_indices = torch.triu_indices(n, n, offset=1)
+        triu_indices = torch.triu_indices(n, n, offset=1) # triu_indices = torch.Size([2, 28]) = (n^2 - n) / 2
         distance_list = distance_matrix[triu_indices[0], triu_indices[1]]
 
         # Normalizing factor
@@ -96,6 +97,7 @@ def edm_sampler(
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+
     intermediate_images = []
     intermediate_denoised = []
     intermediate_denoised_prime = []
@@ -184,9 +186,12 @@ def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, variable
     plt.show()
 
 def plot_diffusion_process_conditional(intermediate_images, num_rows=2, num_cols=5,images=None, save_path=None):
-    num_frames = images.shape[1]
-    images = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-    if num_rows * num_cols  < len(intermediate_images)+ num_frames:
+    if images is not None:
+        num_frames = images.shape[1]
+        images = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+    else:
+        num_frames = 0
+    if num_rows * num_cols < len(intermediate_images) + num_frames:
         num_rows = (len(intermediate_images)+num_frames + num_cols - 1) // num_cols
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
 
@@ -447,6 +452,7 @@ def generate_heatmap(image_mean, outdir):
 
 @click.option('--local_computer',        help='Use local computer',                                              is_flag=True)
 @click.option('--wandb_run_id',          help='W&B run ID',                                                      type=str, default=None)
+@click.option('--particle_guidance_factor', help='Particle guidance factor',                                      type=float, default=0)
 
 def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch_size, device=torch.device('cuda'), **sampler_kwargs):
     """Generate random images using the techniques described in the paper
@@ -475,6 +481,7 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
     num_batches = ((len(seeds) - 1) // (max_batch_size * dist.get_world_size()) + 1) * dist.get_world_size()
     all_batches = torch.as_tensor(seeds).tensor_split(num_batches)
     rank_batches = all_batches[dist.get_rank() :: dist.get_world_size()]
+    particle_guidance_factor = sampler_kwargs["particle_guidance_factor"]
 
 
 
@@ -494,7 +501,7 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
     dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=32, num_digits=1, image_size=32, mode='horizontal',
                               deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
-    dataset_sampler = RandomSampler(dataset_obj)
+    #dataset_sampler = RandomSampler(dataset_obj)
     dataset_iterator = iter(DataLoader(dataset_obj, sampler=dataset_sampler, batch_size=1))
     image_data, labels, direction_change = next(dataset_iterator)
     image_seq = image_data.to(device)
@@ -508,6 +515,8 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
     images = images.to(device).to(torch.float32) * 2 - 1
     idx = direction_change[:,1] - net.num_cond_frames + 1
     image = images[int(idx):int(idx)+1, :, :, :]
+    if net.num_cond_frames == 0:
+        image = None
 
     # Loop over batches.
     dist.print0(f'Generating {len(seeds)} images to "{outdir}"...')

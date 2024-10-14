@@ -1,4 +1,5 @@
 import os
+import random
 import re
 import click
 import tqdm
@@ -18,7 +19,7 @@ import numpy as np
 from scipy.stats import binom
 import time
 from collections import Counter
-
+import wandb
 
 
 # ----------------------------- utility functions -----------------------------
@@ -32,11 +33,11 @@ def generate_heatmap(image_mean, outdir,local_computer=False):
 
     # save the image in out folder with a time stamp
     t = time.localtime()
-    path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}.png")
+    path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
     plt.savefig(path)
     # save it to wandb
     import wandb
-    wandb.log({"generated_images": wandb.Image(path)})
+    wandb.log({"generated_images_mean": wandb.Image(path)})
     if local_computer:
         plt.show()
     plt.close()
@@ -63,11 +64,11 @@ def plot_images_with_centroids(image, centroids, local_computer=False):
         ax[i].axis('off')
 
     t = time.localtime()
-    path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}.png")
+    path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
     plt.savefig(path)
 
     import wandb
-    wandb.log({"generated_images": wandb.Image(path)})
+    wandb.log({"generated_images_reference": wandb.Image(path)})
 
     if local_computer:
         plt.show()
@@ -206,6 +207,39 @@ def calculate_centroids(image):
 
     return centroids
 
+def plot_heatmap_of_centroids(centroids):
+    # Convert to a NumPy array
+    centroids_estimated = np.array(centroids)
+
+    # Create a 2D histogram to represent density
+    heatmap, xedges, yedges = np.histogram2d(
+        centroids_estimated[:, 0],
+        centroids_estimated[:, 1],
+        bins=(32, 32),  # You can adjust the number of bins for resolution
+        range=[[0, 32], [0, 32]]
+    )
+
+    # Plotting the heatmap
+    plt.imshow(heatmap.T, origin='lower', cmap='hot', interpolation='nearest', alpha=0.75)
+    plt.colorbar(label='Density')
+
+    # Optional: Overlay the scatter plot to visualize individual points if desired
+    plt.scatter(centroids_estimated[:, 0], centroids_estimated[:, 1], color='red', marker='x')
+
+    plt.xlabel('X Coordinate')
+    plt.ylabel('Y Coordinate')
+    plt.title('Heatmap of Centroid Density')
+    t = time.localtime()
+    path = os.path.join(os.getcwd(), 'out',
+                        f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
+    plt.ylim(0, 32)
+    plt.xlim(0, 32)
+    plt.savefig(path)
+    if not torch.cuda.is_available():
+        plt.show()
+    plt.close()
+    wandb.log({"generated_images_centroids": wandb.Image(path)})
+
 
 def plot_images(image):
     num_of_images = image.shape[1]
@@ -231,7 +265,36 @@ def polt_images_highlight_direction_change(image, direction_change):
     plt.show()
     plt.close()
 
-
+def get_directions(num_of_directions, mode):
+    if num_of_directions == 8 and mode == 'circle':
+        directions = np.array([
+            [-4, 0],  # left
+            [-4, 4],  # down-left
+            [0, 4],  # down
+            [4, 4],  # down-right
+            [4, 0],  # right
+            [4, -4],  # up-right
+            [0, -4],  # up
+            [-4, -4]  # up left
+        ])
+    elif num_of_directions == 4 and mode == 'circle':
+        directions = np.array([
+            [-4, 0],  # left
+            [0, 4],  # down
+            [4, 0],  # right
+            [0, -4]  # up
+        ])
+    elif num_of_directions == 2 and mode == 'circle':
+        directions = np.array([
+            [0, 4],  # Down
+            [0, -4]  # Up
+        ])
+    elif mode == 'horizontal':
+        directions = np.array([
+            [2, 0],  # Right
+            [-2, 0]  # Left
+        ])
+    return directions
 
 
 
@@ -305,35 +368,7 @@ def generate_images_and_save_heatmap(
 
     #img_cent = (image * 127.5 + 128).clip(0, 255).to(torch.uint8).cpu()
 
-    if num_of_directions == 8 and mode == 'circle':
-        directions = np.array([
-            [-4, 0],  # left
-            [-4, 4],  # down-left
-            [0, 4],  # down
-            [4, 4],  # down-right
-            [4, 0],  # right
-            [4, -4],  # up-right
-            [0, -4],  # up
-            [-4, -4]  # up left
-        ])
-    elif num_of_directions == 4 and mode == 'circle':
-        directions = np.array([
-            [-4, 0],  # left
-            [0, 4],  # down
-            [4, 0],  # right
-            [0, -4]  # up
-        ])
-    elif num_of_directions == 2 and mode == 'circle':
-        directions = np.array([
-            [0, 4],  # Down
-            [0, -4]  # Up
-        ])
-    elif mode == 'horizontal':
-        directions = np.array([
-            [2, 0],  # Right
-            [-2, 0]  # Left
-        ])
-
+    directions = get_directions(num_of_directions, mode)
     # Store sum of images for the heatmap
     #
     image_sum = None
@@ -386,10 +421,10 @@ def generate_images_and_save_heatmap(
         print(f"Error: {e}")
 
 
-    centroids_all = calculate_centroids(image=img_cat_btw_0_1)
+    centroids_estimated = calculate_centroids(image=img_cat_btw_0_1)
     estimated_directions = []
     i = 0
-    for c in centroids_all:
+    for c in centroids_estimated:
         x_t_prev = centroids[-2][0]
         y_t_prev = centroids[-2][1]
         vector = np.array([c[0] - x_t_prev, c[1] - y_t_prev])
@@ -417,7 +452,7 @@ def generate_images_and_save_heatmap(
 
 
     if local_computer:
-        plot_images_with_centroids_reference(image=img_cat_btw_0_1, centroids=centroids_all, centroids_reference=centroids[-2:])
+        plot_images_with_centroids_reference(image=img_cat_btw_0_1, centroids=centroids_estimated, centroids_reference=centroids[-2:])
     return prob_estimated, digit
 
 # ----------------------------- main function -----------------------------
@@ -433,7 +468,7 @@ def generate_images_and_save_heatmap(
 @click.option('--sigma_min', help='Lowest noise level', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True),
               default=0.002)
 @click.option('--sigma_max', help='Highest noise level', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True),
-              default=8)
+              default=80)
 @click.option('--s_churn', help='Stochasticity strength', metavar='FLOAT', type=click.FloatRange(min=0), default=0.5,
               show_default=True)
 @click.option('--rho', help='Time step exponent', metavar='FLOAT', type=click.FloatRange(min=0, min_open=True),
@@ -457,8 +492,11 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     dist.init()
 
     p_true = get_true_probability(true_probability, network_pkl, mode, num_of_directions)
+    if mode == 'circle' and num_of_directions == 4 or num_of_directions == 8:
+        direction_mapping = get_direction_mapping(num_of_directions)
+        stored_probabilities = {key: [] for key in direction_mapping.values()}
 
-    import wandb
+
     wandb.init(project="edm_generation")
     wandb.config.update({"network_pkl": network_pkl, "outdir": outdir, "num_images": num_images, "max_batch_size": max_batch_size,
                          "num_steps": num_steps, "sigma_min": sigma_min, "sigma_max": sigma_max, "S_churn": s_churn, "rho": rho,
@@ -466,12 +504,14 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                          "num_of_directions":num_of_directions, "particle_guidance_factor":particle_guidance_factor})
 
     digit_prob = {str(i): [] for i in range(10)}
+    if digit_filter is not None:
+        digit_filter = [digit_filter]
     for i in tqdm(range(num_seq), desc="Generating images"):
         prob_estimated, digit = generate_images_and_save_heatmap(
             network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
             num_steps=num_steps, mode=mode, num_of_directions=num_of_directions,
             sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path,
-            particle_guidance_factor=particle_guidance_factor, digit_filter=[digit_filter]
+            particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter
         )
         if not 0 in prob_estimated:
             prob_estimated[0] = 0
@@ -493,11 +533,13 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         wandb.log({"Mean": np.mean(np.array(results))})
 
         if mode == 'circle' and num_of_directions == 4 or num_of_directions == 8:
-            direction_mapping = get_direction_mapping(num_of_directions)
             mean_uniform.append(np.mean([value for key, value in prob_estimated.items() if key != 0]))
             wandb.log({f"Mean of the other directions which are uniformed, should: {((1-p_true)/(num_of_directions-1)):.2f}": np.mean(mean_uniform)})
 
             prob_estimated_with_directions = {direction_mapping[k]: v for k, v in prob_estimated.items()}
+            for key, value in prob_estimated_with_directions.items():
+                stored_probabilities[key].append(value)
+                wandb.log({f"Mean of going to {key}": np.mean(stored_probabilities[key])})
             wandb.log(prob_estimated_with_directions)
 
 
@@ -535,13 +577,33 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         plt.legend()
         # save the plt
         t = time.localtime()
-        path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}.png")
+        path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
         plt.savefig(path)
         wandb.log({"final image overview": wandb.Image(path)})
     except Exception as e:
         print(f"Error: {e}")
 
-
+    try:
+        #make a histogram of the for each probability in the digit_prob
+        rows = num_of_directions // 2
+        fig, axs = plt.subplots(rows, 2, figsize=(10, 10)) # 4 rows, 2 columns
+        axs = axs.flatten()
+        i = 0
+        for keys, values_iteration in stored_probabilities.items():
+            if len(values_iteration) < num_images:
+                values_iteration = values_iteration.extend([0] * (num_images - len(values_iteration)))
+            axs[i].hist(values_iteration, bins=50, alpha=0.5)
+            axs[i].set_title(f"Probability of going to {keys}")
+            i += 1
+        plt.tight_layout()
+        plt.show()
+        # save the plt
+        t = time.localtime()
+        path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
+        plt.savefig(path)
+        wandb.log({"final image Histogram": wandb.Image(path)})
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     main()

@@ -129,6 +129,7 @@ class VELoss:
 @persistence.persistent_class
 class EDMLoss:
     def __init__(self, P_mean=-1.2, P_std=1.2, sigma_data=0.5):
+       # sigma is sampled from a log-normal distribution with mean P_mean and std P_std
         self.P_mean = P_mean
         self.P_std = P_std
         self.sigma_data = sigma_data

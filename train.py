@@ -50,7 +50,7 @@ def parse_int_list(s):
 @click.option('--precond',       help='Preconditioning & loss function', metavar='vp|ve|edm',       type=click.Choice(['vp', 've', 'edm']), default='edm', show_default=True)
 
 # Hyperparameters.
-@click.option('--duration',      help='Training duration, in number of training iterations', metavar='MIMG',                          type=click.FloatRange(min=0, min_open=True), default=200, show_default=True)
+@click.option('--duration',      help='Training duration, in number of training iterations', metavar='MIMG',type=click.FloatRange(min=0, min_open=True), default=200, show_default=True)
 @click.option('--batch',         help='Total batch size', metavar='INT',                            type=click.IntRange(min=1), default=2, show_default=True)
 @click.option('--batch-gpu',     help='Limit batch size per GPU', metavar='INT',                    type=click.IntRange(min=1))
 @click.option('--cbase',         help='Channel multiplier  [default: varies]', metavar='INT',       type=int)
@@ -98,6 +98,7 @@ def parse_int_list(s):
 @click.option('--num_direction_circle', help='The number of directions for the circle mode',       type=int, default=8)
 @click.option('--prob_direction_change', help='The probability of changing the direction of the digit to the right ot top for , Note: for that one has to use mode == circle or horizontal', type=float, default=0)
 @click.option('--let_last_frame_after_change', help='The second last frame is always in the middel and then in the last frame a dircation change was made. Note: for that one has to use --move_horizontally', is_flag=True)
+@click.option('--p_mean', help='The mean of the log-normal distribution for the diffusion process from which sigma is sampled to add the nooise on the image', type=float, default=-1.2)
 
 
 def main(**kwargs):
@@ -123,7 +124,7 @@ def main(**kwargs):
     c.dataset_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=opts.data, use_labels=opts.cond, xflip=opts.xflip, cache=opts.cache)
     c.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=opts.workers, prefetch_factor=2)
     c.network_kwargs = dnnlib.EasyDict()
-    c.loss_kwargs = dnnlib.EasyDict()
+    c.loss_kwargs = dnnlib.EasyDict(P_mean=opts.p_mean, P_std=1.2, sigma_data=0.5)
     c.optimizer_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=opts.lr, betas=[0.9,0.999], eps=1e-8)
     c.moving_mnist = dnnlib.EasyDict(moving_mnist=opts.moving_mnist, moving_mnist_path=opts.moving_mnist_path, use_labels=opts.cond, mode=opts.mode
                                      ,prob_direction_change=opts.prob_direction_change, let_last_frame_after_change=opts.let_last_frame_after_change,
