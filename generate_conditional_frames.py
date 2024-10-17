@@ -108,6 +108,8 @@ def edm_sampler(
 
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0] * 0.1
+    # plot x_nets as latent space
+    #plt.imshow((latents.to(torch.float64) * t_steps[0] * 0.1)[0,0,:,:].cpu().numpy(), cmap='gray')
     gamma_arr = []
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         x_cur = x_next
@@ -125,6 +127,8 @@ def edm_sampler(
             x_input = x_hat
 
         # Euler step.
+        # plot x_input as latent space
+        #plt.imshow(x_input[0,0,:,:].cpu().numpy(), cmap='gray')
         denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
         #d_cur = (x_hat - denoised) / t_hat
         particle_guidance_grad = particle_guidance_factor * t_cur * compute_particle_guidance_grad(denoised)
@@ -163,10 +167,10 @@ def edm_sampler(
 
     if plot_diffusion:
         plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
-        plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
+        #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
         plot_diffusion_process_conditional(intermediate_images, images=image)
-        plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
-        plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
+        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
+        #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
     #plot_gamma(gamma_arr, S_churn)
     return x_next, intermediate_images
 
@@ -498,7 +502,7 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
     if dist.get_rank() == 0:
         torch.distributed.barrier()
 
-    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=32, num_digits=1, image_size=32, mode='horizontal',
+    dataset_obj = MovingMNIST(train=True, data_root='./data', seq_len=32, num_digits=1, image_size=32, mode='circle',
                               deterministic=False, log_direction_change=True, step_length=0.1, let_last_frame_after_change=False, use_label=True)
     dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
     #dataset_sampler = RandomSampler(dataset_obj)
@@ -508,9 +512,9 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
     image_seq1 = image_seq[:,:,:,:,0]
     images, labels = convert_video2images_in_batch(images=image_seq, labels=labels, use_label=False,
                                                    num_cond_frames=net.num_cond_frames)
-
-    #centroids = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device_cpu) )
-    #plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device) , centroids=centroids)
+    from generate_heatmap import calculate_centroids, plot_images_with_centroids
+    centroids = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(torch.device('cpu')) )
+    plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(torch.device('cpu')) , centroids=centroids, local_computer=sampler_kwargs["local_computer"])
     digit = torch.argmax(labels[0, 0, :]).item() + 1
     images = images.to(device).to(torch.float32) * 2 - 1
     idx = direction_change[:,1] - net.num_cond_frames + 1
