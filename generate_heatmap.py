@@ -570,6 +570,8 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         num_images = num_of_directions
         S_noise_iterater = [-2, -1.5, -1, .5, 0]
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
+        # add zero to the list
+        S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
         particle_guidance_factor_iterater =   [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
         num_seq_iter = range(num_seq)
