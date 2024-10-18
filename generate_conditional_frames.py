@@ -367,7 +367,7 @@ def parse_int_list(s):
 #----------------------------------------------------------------------------
 
 def generate_images_and_save_heatmap(
-        network_pkl, outdir, num_images=100, max_batch_size=1, num_steps=18,
+        network_pkl, outdir, num_images=100, max_batch_size=1, num_steps=18,particle_guidance_factor=0,
         sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
 ):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
@@ -391,14 +391,14 @@ def generate_images_and_save_heatmap(
     # Store sum of images for the heatmap
     image_sum = None
     generated_images = []
-
+    s_noise = 1
     for seed in range(num_images):
         latents = torch.randn([1, net.img_channels, net.img_resolution, net.img_resolution], device=device)
 
         # Generate the image with S_churn=0.9
         generated_img, _ = edm_sampler(
             net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False
+            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor
         )
 
         # Convert generated image to numpy for processing

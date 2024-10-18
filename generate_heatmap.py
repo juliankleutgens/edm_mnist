@@ -82,10 +82,10 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     heatmap_data = np.zeros((len(particle_guidance_factor_logarithmic), len(S_noise_logarithmic)))
 
     # Iterate through the provided values of S_noise and particle_guidance and fill the heatmap matrix
-    for j, s_noise in enumerate(S_noise_logarithmic):
-        for i, particle_guidance in enumerate(reversed(particle_guidance_factor_logarithmic)):
+    for j, s_churn in enumerate(S_noise_logarithmic):
+        for i, particle_guidance_factor in enumerate(reversed(particle_guidance_factor_logarithmic)):
             # y-axis is reversed to have an increasing values from the bottom to the top
-            key = f"S_churn: {s_noise:.2f}, Particle Guidance: {particle_guidance:.2f}"
+            key = f"S_churn: {s_churn:.2f}, Particle Guidance: {particle_guidance_factor:.2f}"
             if key in safe_num_directions:
                 # Calculate the mean value of the directions and store it in the heatmap matrix
                 heatmap_data[i, j] = np.mean(safe_num_directions[key])
@@ -111,17 +111,18 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     plt.xticks(xticks_indices, xticks_labels)
 
     # Add labels and title
-    plt.xlabel('Noise weight')
-    plt.ylabel('Repulsion weight')
-    plt.title('Euclidean kernel')
+    plt.xlabel('Noise weight of S_churn')
+    plt.ylabel('Repulsion weight of PG')
+    plt.title('Radial kernel')
 
     # Display the plot
-    #plt.show()
+
     t = time.localtime()
     path = os.path.join(os.getcwd(), 'out',
                         f"heatmap_important_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
     plt.savefig(path)
     wandb.log({"final image Histogram": wandb.Image(path)})
+    plt.show()
 
 
 def plot_images_with_centroids_reference(image, centroids, centroids_reference, indexes=None):
@@ -367,7 +368,7 @@ def get_directions(num_of_directions, mode):
 def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         network_pkl, outdir, moving_mnist_path, num_images=100, max_batch_size=1, num_steps=18,
         sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
-        ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None):
+        ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None, s_noise=1):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
 
     plotting = False
@@ -446,7 +447,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         # Generate the image with S_churn=0.9
         generated_img, _ = edm_sampler(
             net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False
+            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor
         )
 
 
@@ -569,9 +570,10 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         num_images = num_of_directions
         S_noise_iterater = [-2, -1.5, -1, .5, 0]
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
-        particle_guidance_factor_iterater =   [-1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]
+        particle_guidance_factor_iterater =   [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
         num_seq_iter = range(num_seq)
+        s_noise = 1
     else:
         S_noise_logarithmic = [s_churn]
         particle_guidance_factor_logarithmic = [particle_guidance_factor]
@@ -594,7 +596,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                     network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
                     num_steps=num_steps, mode=mode, num_of_directions=num_of_directions,
                     sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path,
-                    particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, dataset_obj=dataset_obj, dataset_sampler=dataset_sampler,
+                    particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, dataset_obj=dataset_obj, dataset_sampler=dataset_sampler, s_noise=s_noise
                 )
 
                 if pg_heatmap:
