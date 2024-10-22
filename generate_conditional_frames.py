@@ -44,6 +44,9 @@ def plot_curve_of_t_steps(sigma_min, sigma_max, rho, num_steps, net, latents):
     plt.show()
     plt.close()
 
+def cosine_annealing(epoch, total_epochs, min_lr, max_lr):
+    return min_lr + 0.5 * (max_lr - min_lr) * (1 + np.cos(np.pi * epoch / total_epochs))
+
 def plot_gamma(gamma_arr, S_churn):
     # plot gamma values
     plt.plot(gamma_arr)
@@ -54,8 +57,29 @@ def plot_gamma(gamma_arr, S_churn):
     plt.close()
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
+def compute_distance_matrix(xs, distance='l2'):
+    n = xs.shape[0]
+    if distance not in ['l2', 'iou']:
+        raise ValueError(f"Invalid distance metric: {distance}")
+    if distance == 'l2':
+        distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
 
-def compute_particle_guidance_grad(xs):
+    # Compute matrix of Intersection over Union (IoU) distances
+    elif distance == 'iou':
+        xs_flat = xs.flatten(1)  # Flatten each tensor to 1D
+
+        # Iterate through pairs and calculate IoU for each
+        distance_matrix = torch.zeros((n, n), device=xs.device)
+        for i in range(n):
+            for j in range(i + 1, n):
+                intersection = torch.min(xs_flat[i], xs_flat[j]).sum()  # Element-wise minimum
+                union = torch.max(xs_flat[i], xs_flat[j]).sum()  # Element-wise maximum
+                iou = intersection / union
+                distance_matrix[i, j] = 1 - iou  # IoU distance is 1 - IoU
+                distance_matrix[j, i] = distance_matrix[i, j]
+    return distance_matrix
+
+def compute_particle_guidance_grad(xs, gamma=1, alpha=1, distance='l2'):
     with torch.enable_grad():
         xs = (xs.detach().clone() + 1) * 0.5  # transform from value range [-1,1] to [0,1]
         xs.requires_grad = True
@@ -63,7 +87,7 @@ def compute_particle_guidance_grad(xs):
 
         # Compute matrix of L2 distances
         #  xs.flatten(1).shape = torch.Size([8, 1024])
-        distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
+        distance_matrix = compute_distance_matrix(xs, distance=distance)
 
         # Only consider upper triangular distance matrix, rest are duplicate entries or distance to self
         triu_indices = torch.triu_indices(n, n, offset=1) # triu_indices = torch.Size([2, 28]) = (n^2 - n) / 2
@@ -71,8 +95,11 @@ def compute_particle_guidance_grad(xs):
 
         # Normalizing factor
         h_t = distance_list.median() ** 2 / math.log(n)
+        h_t = h_t * gamma
+
         # Sum of RBF kernels
         rbf_sum = (-distance_list / h_t).exp().sum()
+        rbf_sum = rbf_sum * alpha
         rbf_sum.backward()
 
         return xs.grad
@@ -82,6 +109,8 @@ def edm_sampler(
     num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
     S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False,
     plot_diffusion=False, image=None, particle_guidance_factor=0,
+    gamma_scheduler=False, alpha_scheduler=False,
+    particle_guidance_distance='l2'
 ):
     # Adjust noise levels based on what's supported by the network.
     if net.num_cond_frames > 0:
@@ -97,7 +126,11 @@ def edm_sampler(
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+    # cosine annealing
+    gamma_schedule = [cosine_annealing(s, num_steps, 0, 1) for s in range(num_steps)] if gamma_scheduler else [1 for s in range(num_steps)]
+    alpha_schedule = [cosine_annealing(s, num_steps, 0, 1) for s in range(num_steps)] if alpha_scheduler else [1 for s in range(num_steps)]
 
+    # plot t steps
     intermediate_images = []
     intermediate_denoised = []
     intermediate_denoised_prime = []
@@ -105,11 +138,8 @@ def edm_sampler(
     particle_guidance_grad_images = []
 
 
-
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0] * 0.1
-    # plot x_nets as latent space
-    #plt.imshow((latents.to(torch.float64) * t_steps[0] * 0.1)[0,0,:,:].cpu().numpy(), cmap='gray')
     gamma_arr = []
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         x_cur = x_next
@@ -128,10 +158,10 @@ def edm_sampler(
 
         # Euler step.
         # plot x_input as latent space
-        #plt.imshow(x_input[0,0,:,:].cpu().numpy(), cmap='gray')
         denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
         #d_cur = (x_hat - denoised) / t_hat
-        particle_guidance_grad = particle_guidance_factor * t_cur * compute_particle_guidance_grad(denoised)
+        pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
+        particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
         d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
 
         x_next = x_hat + (t_next - t_hat) * d_cur
@@ -166,7 +196,7 @@ def edm_sampler(
 
 
     if plot_diffusion:
-        plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
+        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
         #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
         plot_diffusion_process_conditional(intermediate_images, images=image)
         #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')

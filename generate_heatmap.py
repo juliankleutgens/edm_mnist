@@ -78,7 +78,7 @@ def plot_images_with_centroids(image, centroids, local_computer=False):
         #plt.show()
 
 
-def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_num_directions):
+def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_num_directions, mode='directions'):
     heatmap_data = np.zeros((len(particle_guidance_factor_logarithmic), len(S_noise_logarithmic)))
 
     # Iterate through the provided values of S_noise and particle_guidance and fill the heatmap matrix
@@ -111,17 +111,20 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     plt.xticks(xticks_indices, xticks_labels)
 
     # Add labels and title
-    plt.xlabel('Noise weight of S_churn')
-    plt.ylabel('Repulsion weight of PG')
-    plt.title('Radial kernel')
-
-    # Display the plot
+    if mode == 'directions':
+        plt.xlabel('Noise weight of S_churn')
+        plt.ylabel('Particle Guidance factor')
+        plt.title('Mean Number of Safe Directions')
+    elif mode == 'quality':
+        plt.xlabel('Noise weight of S_churn')
+        plt.ylabel('Particle Guidance factor')
+        plt.title('Mean Quality of Images')
 
     t = time.localtime()
     path = os.path.join(os.getcwd(), 'out',
-                        f"heatmap_important_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
+                        f"heatmap_important_images_{mode}_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
     plt.savefig(path)
-    wandb.log({"final image Histogram": wandb.Image(path)})
+    wandb.log({f"final image Histogram {mode}": wandb.Image(path)})
     plt.show()
 
 
@@ -360,15 +363,71 @@ def get_directions(num_of_directions, mode):
         ])
     return directions
 
+import torch.nn.functional as F
+import cv2
+
+def translate_image(image, d_x, d_y):
+    M = np.float32([
+        [1, 0, d_x],
+        [0, 1, d_y]
+    ])
+
+    return cv2.warpAffine(image, M, (image.shape[1], image.shape[0]))
+
+def calculate_quality_of_images(img_cat_btw_0_1, vectors, conditional_image):
+    quality_of_images = []
+
+    # Loop through each image and its corresponding vector
+    for i, vector in enumerate(vectors):
+        # Ensure vector is a PyTorch tensor
+        if isinstance(vector, np.ndarray):
+            vector = torch.tensor(vector, dtype=torch.float32)
+        translated = translate_image(conditional_image.squeeze().cpu().numpy(), vector[0].item(), vector[1].item())
+        translated = torch.tensor(translated, dtype=torch.float32).unsqueeze(0)
+        # Calculate the L2 distance (Euclidean distance) between the moved image and the conditional image
+        distance = torch.norm(img_cat_btw_0_1[i, :, :, :] - translated, p=2)
+        quality_of_images.append(distance.item())
+    return quality_of_images
 
 
+"""
+        # Clone the image to avoid modifying the original tensor
+        moved_image = img_cat_btw_0_1[i, :, :, :].clone()
 
+        # Permute the image to (height, width, channels) format
+        moved_image = moved_image.permute(1, 2, 0)
+        moved_image = moved_image.float()
+
+        # Create a 2x3 affine matrix for translation
+        translation_matrix = torch.eye(2, 3, dtype=torch.float32)  # Identity matrix
+        translation_matrix[:, 2] = -vector[:2]  # Apply the translation from the vector (reverse direction)
+
+        # Create the affine grid for transformation
+        grid = F.affine_grid(translation_matrix.unsqueeze(0), moved_image.unsqueeze(0).size(),
+                             align_corners=False)
+
+        # Apply the translation using grid_sample
+        moved_image_shifted = F.grid_sample(
+            moved_image.unsqueeze(0),  # Add batch and channel dimensions
+            grid,
+            align_corners=False
+        ).squeeze()  # Remove the added dimensions
+
+        # Calculate the L2 distance (Euclidean distance) between the moved image and the conditional image
+        distance = torch.norm(moved_image_shifted - conditional_image, p=2)
+
+        # Append the calculated distance to the quality list
+        quality_of_images.append(distance.item())
+
+    return quality_of_images
+"""
 # ----------------------------- generating function -----------------------------
 # ------------------------------------------------------------------------------
 def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         network_pkl, outdir, moving_mnist_path, num_images=100, max_batch_size=1, num_steps=18,
         sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
-        ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None, s_noise=1):
+        ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None, s_noise=1
+        , gamma_scheduler=False, alpha_scheduler=False,particle_guidance_distance='l2'):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
 
     plotting = False
@@ -419,10 +478,10 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
     centroids = calculate_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2)
     if (local_computer and plotting):
         polt_images_highlight_direction_change(image_data, direction_change)
-    try:
-        plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids, local_computer=(local_computer and plotting))
-    except Exception as e:
-        print(f"Error: {e}")
+        try:
+            plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids, local_computer=(local_computer and plotting))
+        except Exception as e:
+            print(f"Error: {e}")
 
     #img_cent = (image * 127.5 + 128).clip(0, 255).to(torch.uint8).cpu()
 
@@ -447,13 +506,12 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         # Generate the image with S_churn=0.9
         generated_img, _ = edm_sampler(
             net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor
+            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor,
+            gamma_scheduler=gamma_scheduler,particle_guidance_distance=particle_guidance_distance, alpha_scheduler=alpha_scheduler
         )
-
+        generated_img = generated_img.clip(-1, 1)
 
         img_btw_0_1 = (generated_img + 1) / 2
-        # thearshold all values below 0.1 to 0
-        # img_btw_0_1[img_btw_0_1 < 0.55] = 0
         img_cat_btw_0_1 = torch.cat((img_cat_btw_0_1, img_btw_0_1),dim=0) if 'img_cat_btw_0_1' in locals() else img_btw_0_1
 
         # img_np = (img_btw_0_1 * 255).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
@@ -467,7 +525,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 
 
     # Average the pixel intensities to compute the heatmap
-    if image_sum.ndim  == 2:
+    if image_sum.ndim == 2:
         image_sum = np.expand_dims(image_sum, axis=0)
     image_mean = image_sum / num_images
     try:
@@ -478,16 +536,22 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 
     centroids_estimated = calculate_centroids(image=img_cat_btw_0_1)
     estimated_directions = []
+    vectors = []
     i = 0
     for c in centroids_estimated:
         x_t_prev = centroids[-2][0]
         y_t_prev = centroids[-2][1]
         vector = np.array([c[0] - x_t_prev, c[1] - y_t_prev])
+        vectors.append(vector)
         vector_norm = vector / np.linalg.norm(vector)
         directions_norm = directions / np.linalg.norm(directions, axis=1)[:, np.newaxis]
         cosine_similarities = np.dot(directions_norm, vector_norm)
         closest_index = np.argmax(cosine_similarities)
         estimated_directions.append(closest_index)
+
+    last_conditional_image_btw_0_1 = (image[:, -2, :, :] + 1) / 2
+    qualtity_of_images = calculate_quality_of_images(img_cat_btw_0_1, vectors, last_conditional_image_btw_0_1)
+    mean_quality = np.mean(qualtity_of_images)
 
 
     count = dict(Counter(estimated_directions))
@@ -509,7 +573,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 
     if local_computer and plotting:
         plot_images_with_centroids_reference(image=img_cat_btw_0_1, centroids=centroids_estimated, centroids_reference=centroids[-2:])
-    return prob_estimated, digit
+    return prob_estimated, digit, mean_quality
 
 # ----------------------------- main function -----------------------------
 # -------------------------------------------------------------------------
@@ -540,10 +604,13 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 @click.option('--particle_guidance_factor', help='Particle guidance factor', metavar='FLOAT', type=click.FloatRange(min=0), default=0)
 @click.option('--digit_filter', help='Filter the digit to generate', metavar='INT', type=int, default=None)
 @click.option('--pg_heatmap',            help='Generate images and save heatmap',                                 is_flag=True)
+@click.option('--gamma_scheduler', help='Use gamma scheduler', is_flag=True)
+@click.option('--alpha_scheduler', help='Use alpha scheduler', is_flag=True)
+@click.option('--particle_guidance_distance', help='Particle guidance distance, l2 or iou', metavar='STR', type=str, default='l2')
 
 def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,moving_mnist_path,
          local_computer, true_probability=None, num_seq=1, mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None,
-         pg_heatmap = False):
+         pg_heatmap = False, gamma_scheduler=False, alpha_scheduler=False, particle_guidance_distance='l2'):
     device = torch.device('cpu' if local_computer else 'cuda')
     results = []
     mean_uniform = []
@@ -559,7 +626,9 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     wandb.config.update({"network_pkl": network_pkl, "outdir": outdir, "num_images": num_images, "max_batch_size": max_batch_size,
                          "num_steps": num_steps, "sigma_min": sigma_min, "sigma_max": sigma_max, "S_churn": s_churn, "rho": rho,
                          "local_computer": local_computer, "device": device, "true_probability": p_true, "num_seq": num_seq, "mode":mode,
-                         "num_of_directions":num_of_directions, "particle_guidance_factor":particle_guidance_factor})
+                         "num_of_directions":num_of_directions, "particle_guidance_factor":particle_guidance_factor,
+                         "digit_filter":digit_filter, "pg_heatmap":pg_heatmap, "gamma_scheduler":gamma_scheduler, "alpha_scheduler":alpha_scheduler,
+                         "particle_guidance_distance":particle_guidance_distance})
 
     digit_prob = {str(i): [] for i in range(10)}
     if digit_filter is not None:
@@ -572,8 +641,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
         # add zero to the list
         S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
-        #S_noise_logarithmic = [0]
-        particle_guidance_factor_iterater =   [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]
+        particle_guidance_factor_iterater = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
         num_seq_iter = range(num_seq)
 
@@ -582,6 +650,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         particle_guidance_factor_logarithmic = [particle_guidance_factor]
         num_seq_iter = tqdm(range(num_seq), desc="Generating images")
     safe_num_directions = {}
+    safe_quality = {}
     count_print = 0 # to count the number of iterations
     for s_churn in S_noise_logarithmic:
         for particle_guidance_factor in particle_guidance_factor_logarithmic:
@@ -595,11 +664,12 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
             dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
             print(f"Count: {count_print}")
             for i in num_seq_iter:
-                prob_estimated, digit = generate_images_and_save_heatmap(
+                prob_estimated, digit, mean_quality = generate_images_and_save_heatmap(
                     network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
                     num_steps=num_steps, mode=mode, num_of_directions=num_of_directions,
                     sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path,
-                    particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, dataset_obj=dataset_obj, dataset_sampler=dataset_sampler, s_noise=s_noise
+                    particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, dataset_obj=dataset_obj, dataset_sampler=dataset_sampler, s_noise=s_noise,
+                    gamma_scheduler=gamma_scheduler, alpha_scheduler=alpha_scheduler, particle_guidance_distance=particle_guidance_distance,
                 )
 
                 if pg_heatmap:
@@ -608,6 +678,11 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                         safe_num_directions[key] = [len(prob_estimated)]
                     else:
                         safe_num_directions[key].append(len(prob_estimated))
+                    if safe_quality.get(key) is None:
+                        safe_quality[key] = [mean_quality]
+                    else:
+                        safe_quality[key].append(mean_quality)
+
                 else:
                     if not 0 in prob_estimated and not pg_heatmap:
                         prob_estimated[0] = 0
@@ -630,11 +705,11 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                 try:
                     digit_prob[str(digit)].append(prob_estimated[0])
                 except KeyError:
-                    print(f"KeyError: {digit}")
                     continue
 
     if pg_heatmap:
         plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_num_directions)
+        plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_quality, mode='quality')
     results = np.array(results)
     mean_value = np.mean(results)
     median_value = np.median(results)
