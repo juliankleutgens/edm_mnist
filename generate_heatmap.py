@@ -550,7 +550,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         estimated_directions.append(closest_index)
 
     last_conditional_image_btw_0_1 = (image[:, -2, :, :] + 1) / 2
-    qualtity_of_images = calculate_quality_of_images(img_cat_btw_0_1, vectors, last_conditional_image_btw_0_1)
+    qualtity_of_images = calculate_quality_of_images(img_cat_btw_0_1.cpu(), vectors, last_conditional_image_btw_0_1.cpu())
     mean_quality = np.mean(qualtity_of_images)
 
 
