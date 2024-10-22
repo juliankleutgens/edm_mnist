@@ -61,6 +61,7 @@ def compute_distance_matrix(xs, distance='l2'):
     n = xs.shape[0]
     if distance not in ['l2', 'iou']:
         raise ValueError(f"Invalid distance metric: {distance}")
+
     if distance == 'l2':
         distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
 
@@ -162,7 +163,11 @@ def edm_sampler(
         #d_cur = (x_hat - denoised) / t_hat
         pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
         particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
-        d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
+        if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any():
+            print('Nan or Inf in pg_grad')
+            d_cur = (x_hat - denoised) / t_hat
+        else:
+            d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
 
         x_next = x_hat + (t_next - t_hat) * d_cur
 
@@ -175,6 +180,7 @@ def edm_sampler(
             denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+        x_next = x_next.clamp(-1, 1)
 
         # Save intermediate images.
         # Convert x_next to an image and store it
