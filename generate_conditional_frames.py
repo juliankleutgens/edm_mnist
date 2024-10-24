@@ -194,8 +194,8 @@ def edm_sampler(
             direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
 
-            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
+#            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+#            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
 
             particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting

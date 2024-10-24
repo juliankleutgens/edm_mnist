@@ -29,3 +29,5 @@ datasets/cifar10-32x32.zip
 dataset/
 *.tar.gz
 *.zip
+/mnist_resnet18_5e.pth
+/mnist_resnet18.pth
