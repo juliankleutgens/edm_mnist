@@ -199,7 +199,7 @@ def make_image_binary(image_tensor):
 
 def make_image_background_zero(image_tensor):
     # Convert the input PyTorch tensor to a NumPy array and scale it to [0, 255]
-    image_numpy = image_tensor.numpy().astype(np.float32)
+    image_numpy = image_tensor.cpu().numpy().astype(np.float32)
     scaled_images = (image_numpy * 255).astype(np.uint8)
 
     # Prepare an array to hold the output
@@ -218,7 +218,7 @@ def make_image_background_zero(image_tensor):
     # Convert the result images back to a PyTorch tensor
     result_images_tensor = torch.tensor(result_images, dtype=torch.float32) / 255.0  # Scale back to [0, 1]
 
-    return result_images_tensor
+    return result_images_tensor.device
 
 
 def get_direction_mapping(num_of_directions):
@@ -520,8 +520,8 @@ def generate_images_and_save_heatmap(
         )
         generated_img = generated_img.clip(-1, 1)
         generated_img_btw_0_1 = (generated_img + 1) / 2
-        generated_img_binary = make_image_background_zero(generated_img_btw_0_1)
-        batch_predicted_digits = get_prediction(generated_img_binary, device_cpu, path_classifier)
+        generated_img_zero_background = make_image_background_zero(generated_img_btw_0_1)
+        batch_predicted_digits = get_prediction(generated_img_zero_background, device_cpu, path_classifier)
 
         img_np = (generated_img * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         generated_images.append(img_np[0])
@@ -533,7 +533,7 @@ def generate_images_and_save_heatmap(
 
 
         plot_the_batch_of_generated_images(generated_img_btw_0_1, (local_computer and plotting))
-        plot_the_batch_of_generated_images(generated_img_binary, (local_computer and plotting))
+        plot_the_batch_of_generated_images(generated_img_zero_background, (local_computer and plotting))
 
 
     # Average the pixel intensities to compute the heatmap
