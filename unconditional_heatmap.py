@@ -573,7 +573,7 @@ def generate_images_and_save_heatmap(
 @click.option('--num_seq', help='Number of sequences', metavar='INT', type=click.IntRange(min=1),
               default=11)
 @click.option('--mode', help='Mode of the moving mnist dataset: free, circle, horizontal', metavar='STR', type=str, default='horizontal')
-@click.option('--moving_mnist_path', help='Path to the moving mnist dataset', metavar='STR', type=str, required=True)
+#@click.option('--moving_mnist_path', help='Path to the moving mnist dataset', metavar='STR', type=str, required=True)
 @click.option('--particle_guidance_factor', help='Particle guidance factor', metavar='FLOAT', type=click.FloatRange(min=0), default=0)
 @click.option('--digit_filter', help='Filter the digit to generate', metavar='INT', type=int, default=None)
 @click.option('--pg_heatmap',            help='Generate images and save heatmap',                                 is_flag=True)
@@ -582,7 +582,7 @@ def generate_images_and_save_heatmap(
 @click.option('--particle_guidance_distance', help='Particle guidance distance, l2 or iou', metavar='STR', type=str, default='l2')
 @click.option('--path_classifier', help='Path to the classifier model', metavar='STR', type=str, default='/Users/juliankleutgens/PycharmProjects/edm-main/mnist_resnet18_5e.pth')
 
-def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,moving_mnist_path,
+def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,
          local_computer, true_probability=None, num_seq=1, mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None,
          pg_heatmap = False, gamma_scheduler=False, alpha_scheduler=False, particle_guidance_distance='l2', path_classifier=None):
     device = torch.device('cpu' if local_computer else 'cuda')
@@ -635,7 +635,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                         safe_digits[key] = [len(set(digit))]
                     else:
                         safe_digits[key].append(len(set(digit)))
-                count_print += 1
+            count_print += 1
 
 
 
