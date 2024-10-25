@@ -532,8 +532,8 @@ def generate_images_and_save_heatmap(
             image_sum += np.sum(img_np.astype(np.float32), axis=0) if img_np.shape[0] > 1 else img_np[0].astype(np.float32)
 
 
-        plot_the_batch_of_generated_images(generated_img_btw_0_1, (local_computer and plotting))
-        plot_the_batch_of_generated_images(generated_img_zero_background, (local_computer and plotting))
+        plot_the_batch_of_generated_images(generated_img_btw_0_1.cpu(), (local_computer and plotting))
+        plot_the_batch_of_generated_images(generated_img_zero_background.cpu(), (local_computer and plotting))
 
 
     # Average the pixel intensities to compute the heatmap
