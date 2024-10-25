@@ -118,7 +118,7 @@ def test(model, test_loader, device):
 def get_prediction(image, device, path):
     # load the model pretrained model from path
     model = ResNetForMNIST()
-    model.load_state_dict(torch.load(path))
+    model.load_state_dict(torch.load(path, map_location=device))
     model.eval()
 
     transform = transforms.Compose([
