@@ -218,7 +218,7 @@ def make_image_background_zero(image_tensor):
     # Convert the result images back to a PyTorch tensor
     result_images_tensor = torch.tensor(result_images, dtype=torch.float32) / 255.0  # Scale back to [0, 1]
 
-    return result_images_tensor.device
+    return result_images_tensor.to(image_tensor.device)
 
 
 def get_direction_mapping(num_of_directions):
