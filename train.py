@@ -94,7 +94,7 @@ def parse_int_list(s):
 @click.option('--resample_filter', help='The resample filter for the model',                      type=parse_int_list, default=[1,1])
 @click.option('--model_channels', help='The number of channels in the model',                     type=int, default=32)
 @click.option('--channel_mult',  help='The channel multiplier for the model',                     type=parse_int_list, default=[1,1,2])
-@click.option('--mode', help='The mode of the moving MNIST dataset, there is horizontal, circle, free ',type=str, default='train')
+@click.option('--mode', help='The mode of the moving MNIST dataset, there is horizontal, circle, free, middel ',type=str, default='train')
 @click.option('--num_direction_circle', help='The number of directions for the circle mode',       type=int, default=8)
 @click.option('--prob_direction_change', help='The probability of changing the direction of the digit to the right ot top for , Note: for that one has to use mode == circle or horizontal', type=float, default=0)
 @click.option('--let_last_frame_after_change', help='The second last frame is always in the middel and then in the last frame a dircation change was made. Note: for that one has to use --move_horizontally', is_flag=True)

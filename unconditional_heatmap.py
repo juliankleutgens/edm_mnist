@@ -79,7 +79,7 @@ def plot_images_with_centroids(image, centroids, local_computer=False):
         #plt.show()
 
 
-def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_num_directions, mode='directions'):
+def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_num_directions):
     heatmap_data = np.zeros((len(particle_guidance_factor_logarithmic), len(S_noise_logarithmic)))
 
     # Iterate through the provided values of S_noise and particle_guidance and fill the heatmap matrix
@@ -96,7 +96,7 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     # Plot the heatmap
     plt.figure(figsize=(8, 6))
     plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
-    plt.colorbar(label='Mean Number of Directions')
+
 
     # Set x and y axis labels with corresponding values
     # For particle guidance factor logarithmic (y-axis)
@@ -111,19 +111,11 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     plt.yticks(yticks_indices, yticks_labels)
     plt.xticks(xticks_indices, xticks_labels)
 
-    # Add labels and title
-    if mode == 'directions':
-        plt.xlabel('Noise weight of S_churn')
-        plt.ylabel('Particle Guidance factor')
-        plt.title('Mean Number of Directions')
-    elif mode == 'quality':
-        plt.xlabel('Noise weight of S_churn')
-        plt.ylabel('Particle Guidance factor')
-        plt.title('Mean Quality of Images')
-    elif mode == 'digit':
-        plt.xlabel('Noise weight of S_churn')
-        plt.ylabel('Particle Guidance factor')
-        plt.title('Number of different Digits')
+    plt.colorbar(label='Number of different Digits')
+    plt.xlabel('Noise weight of S_churn')
+    plt.ylabel('Particle Guidance factor')
+    plt.title('Number of different Digits')
+    mode ='different digit'
     t = time.localtime()
     path = os.path.join(os.getcwd(), 'out',
                         f"heatmap_important_images_{mode}_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
@@ -368,9 +360,10 @@ def plot_images(image):
     #plt.show()
     plt.close()
 
-def plot_the_batch_of_generated_images(generated_images, local_computer = False):
+def plot_the_batch_of_generated_images(generated_images, local_computer = False, config_in_title = ""):
     num_of_images = len(generated_images)
     fig, ax = plt.subplots(1, num_of_images, figsize=(num_of_images, 2))
+    plt.suptitle(f"Generated Images {config_in_title}")
     for i in range(num_of_images):
         ax[i].imshow(generated_images[i,0,:,:], cmap='gray')
         ax[i].axis('off')
@@ -380,7 +373,7 @@ def plot_the_batch_of_generated_images(generated_images, local_computer = False)
     plt.savefig(path)
     # save it to wandb
     import wandb
-    wandb.log({"generated_images_mean": wandb.Image(path)})
+    wandb.log({"generated_images": wandb.Image(path)})
     if local_computer:
         jjj = 0
         plt.show()
@@ -531,9 +524,9 @@ def generate_images_and_save_heatmap(
         else:
             image_sum += np.sum(img_np.astype(np.float32), axis=0) if img_np.shape[0] > 1 else img_np[0].astype(np.float32)
 
-
-        plot_the_batch_of_generated_images(generated_img_btw_0_1.cpu(), (local_computer and plotting))
-        plot_the_batch_of_generated_images(generated_img_zero_background.cpu(), (local_computer and plotting))
+        config_in_title = f"S_churn_{S_churn:.2f}_PG_{particle_guidance_factor:.2f}"
+        plot_the_batch_of_generated_images(generated_images=generated_img_btw_0_1.cpu(), config_in_title = config_in_title,local_computer=(local_computer and plotting))
+        #plot_the_batch_of_generated_images(generated_img_zero_background.cpu(), (local_computer and plotting))
 
 
     # Average the pixel intensities to compute the heatmap
@@ -606,12 +599,13 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     mode = 'unconditional'
     num_images = 10
     max_batch_size = 10
-    S_noise_iterater = [-2, -1.5, -1, .5, 0]
+    S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
     S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
     S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
     # add zero to the list
-    particle_guidance_factor_iterater = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]  # [ 1.5, 2, 2.5, 3]#
+    particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # [ 1.5, 2, 2.5, 3]#
     particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
+    particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
     num_seq_iter = range(num_seq)
 
     safe_digits = {}
@@ -641,7 +635,6 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
 
     if pg_heatmap:
         plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_digits)
-        plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_logarithmic, safe_digits, mode='Generated Different Digits')
     results = np.array(results)
 
 

@@ -96,13 +96,22 @@ def compute_particle_guidance_grad(xs, gamma=1, alpha=1, distance='l2'):
 
         # Normalizing factor
         h_t = distance_list.median() ** 2 / math.log(n)
-        h_t = h_t * gamma
 
         # Sum of RBF kernels
-        rbf_sum = (-distance_list / h_t).exp().sum()
+        rbf_sum = (-distance_list * gamma / h_t).exp().sum()
         rbf_sum = rbf_sum * alpha
         rbf_sum.backward()
-
+        """
+        xs_grad = torch.zeros_like(xs)
+        # do gradient by hand
+        counter = 0
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    xs_grad[i] += -gamma * (xs[i] - xs[j]) * (-distance_matrix[i, j] * gamma / h_t).exp() / h_t
+                    counter += 1
+        xs_grad_torch = xs.grad
+        """
         return xs.grad
 
 def edm_sampler(
@@ -180,7 +189,6 @@ def edm_sampler(
             denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
-        x_next = x_next.clamp(-1, 1)
 
         # Save intermediate images.
         # Convert x_next to an image and store it

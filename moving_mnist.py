@@ -85,8 +85,11 @@ class MovingMNIST(object):
                 x, frame_idx_dir_change = self.jump_randomly_in_eight_directions_back_and_forth(digit, x, frame_idx_dir_change)
             elif  'free' in self.mode:
                 x, frame_idx_dir_change = self._move_free(digit, x, frame_idx_dir_change)
+            elif 'middel' in self.mode:
+                x, frame_idx_dir_change = self._stay_middle(digit, x, frame_idx_dir_change)
             else:
-                raise ValueError("mode must be one of 'horizontal', 'circle', or 'free'")
+                raise ValueError("mode must be one of 'horizontal', 'middel', 'circle', or 'free'")
+
 
         x[x>1] = 1.
         # fill the list frame_idx_dir_change with zeros to match the length of the sequence
@@ -123,6 +126,17 @@ class MovingMNIST(object):
     @property
     def num_channels(self):
         return self.channels
+
+    def _stay_middle(self, digit, x, frame_idx_dir_change):
+        image_size = self.image_size
+        digit_size = self.digit_size
+        sy = (image_size - digit_size) // 2
+        sx = (image_size - digit_size) // 2
+
+        for t in range(self.seq_len):
+            x[t, sy:sy + digit_size, sx:sx + digit_size, 0] += digit.numpy().squeeze()
+        frame_idx_dir_change.append(0)
+        return x, frame_idx_dir_change
 
     def _move_free(self, digit, x, frame_idx_dir_change):
         image_size = self.image_size

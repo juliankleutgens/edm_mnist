@@ -23,12 +23,12 @@ from generate_conditional_frames import edm_sampler
 
 # ----------------------------- utility functions -----------------------------
 # -----------------------------------------------------------------------------
-def generate_heatmap(image_mean, outdir,local_computer=False):
+def generate_heatmap(image_mean, config_in_title,local_computer=False):
     """Generate and save a heatmap based on the mean pixel intensities of generated images."""
     plt.figure(figsize=(8, 8))
     plt.imshow(image_mean[:, :, 0], cmap='hot', interpolation='nearest')  # Assuming grayscale images
     plt.colorbar(label='Pixel Intensity')
-    plt.title('Heatmap of Generated Images')
+    plt.title(f'Heatmap of Generated Images with {config_in_title}')
 
     # save the image in out folder with a time stamp
     t = time.localtime()
@@ -95,7 +95,6 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     # Plot the heatmap
     plt.figure(figsize=(8, 6))
     plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
-    plt.colorbar(label='Mean Number of Directions')
 
     # Set x and y axis labels with corresponding values
     # For particle guidance factor logarithmic (y-axis)
@@ -112,10 +111,12 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
 
     # Add labels and title
     if mode == 'directions':
+        plt.colorbar(label='Mean Number of Directions')
         plt.xlabel('Noise weight of S_churn')
         plt.ylabel('Particle Guidance factor')
         plt.title('Mean Number of Directions')
     elif mode == 'quality':
+        plt.colorbar(label='Mean Quality of Images')
         plt.xlabel('Noise weight of S_churn')
         plt.ylabel('Particle Guidance factor')
         plt.title('Mean Quality of Images')
@@ -478,7 +479,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
     image = images[int(idx):int(idx) + 1, :, :, :]
 
     centroids = calculate_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2)
-    if (local_computer and plotting):
+    if (local_computer):
         polt_images_highlight_direction_change(image_data, direction_change)
         try:
             plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids,
@@ -532,7 +533,8 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         image_sum = np.expand_dims(image_sum, axis=0)
     image_mean = image_sum / num_images
     try:
-        generate_heatmap(image_mean, outdir, local_computer=(local_computer))
+        config_in_title = f"S_churn_{S_churn:.2f}_PG_{particle_guidance_factor:.2f}"
+        generate_heatmap(image_mean=image_mean,config_in_title=config_in_title , local_computer=(local_computer))
     except Exception as e:
         print(f"Error: {e}")
 
@@ -640,12 +642,13 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     if pg_heatmap:
         mode = 'circle'
         num_images = num_of_directions
-        S_noise_iterater = [-2, -1.5, -1, .5, 0]
+        S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
         S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
         # add zero to the list
-        particle_guidance_factor_iterater = [-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 2.5, 3]#[ 1.5, 2, 2.5, 3]#
+        particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75 , 1]#[ 1.5, 2, 2.5, 3]#
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
+        particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
         num_seq_iter = range(num_seq)
 
     else:
