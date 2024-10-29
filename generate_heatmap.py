@@ -552,7 +552,7 @@ def edm_sampler2(
                 pg_grad = torch.zeros_like(denoised)
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
             if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any():
-                print('Nan or Inf in pg_grad')
+                #print('Nan or Inf in pg_grad')
                 d_cur = (x_hat - denoised) / t_hat
             else:
                 d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad

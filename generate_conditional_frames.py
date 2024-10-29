@@ -181,7 +181,7 @@ def edm_sampler(
             pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
             if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any() or (separate_grad_and_PG and j == 0):
-                print('Nan or Inf in pg_grad')
+                #print('Nan or Inf in pg_grad')
                 d_cur = (x_hat - denoised) / t_hat
             elif (separate_grad_and_PG and j == 1):
                 d_cur = - particle_guidance_grad
