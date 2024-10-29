@@ -21,6 +21,7 @@ from collections import Counter
 import wandb
 from generate_conditional_frames import edm_sampler
 from resnet_classifier import get_prediction
+from generate_heatmap import edm_sampler2
 
 # ----------------------------- utility functions -----------------------------
 # -----------------------------------------------------------------------------
@@ -461,14 +462,14 @@ def generate_images_and_save_heatmap(
         sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
         ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None, s_noise=1
         , gamma_scheduler=False, alpha_scheduler=False,particle_guidance_distance='l2', iteration=0,
-        path_classifier=None):
+        path_classifier=None, separate_grad_and_PG=False, generate_batch_sequentially=False):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
 
     plotting = False
     if local_computer:
         device = torch.device('cpu')
 
-    seeds = [i + 1000+ iteration*num_images for i in range(num_images)]
+    seeds = [i + 1000 + iteration*num_images for i in range(num_images)]
     num_batches = ((len(seeds) - 1) // (max_batch_size * dist.get_world_size()) + 1) * dist.get_world_size()
     all_batches = torch.as_tensor(seeds).tensor_split(num_batches)
     rank_batches = all_batches[dist.get_rank() :: dist.get_world_size()]
@@ -484,6 +485,8 @@ def generate_images_and_save_heatmap(
     # Other ranks follow.
     if dist.get_rank() == 0:
         torch.distributed.barrier()
+    # get the sampler
+    sampler = edm_sampler2 if generate_batch_sequentially else edm_sampler
 
     # ------------------- Initialize the MovingMNIST dataset -------------------
     device_cpu = torch.device('cpu')
@@ -506,10 +509,11 @@ def generate_images_and_save_heatmap(
         rnd = StackedRandomGenerator(device, batch_seeds)
         latents = rnd.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
         # Generate the image with S_churn=0.9
-        generated_img, _ = edm_sampler(
+        generated_img, _ = sampler(
             net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
             rho=rho, S_churn=S_churn, image=None, plot_diffusion=plotting, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor,
             gamma_scheduler=gamma_scheduler,particle_guidance_distance=particle_guidance_distance, alpha_scheduler=alpha_scheduler,
+            separate_grad_and_PG=separate_grad_and_PG
         )
         generated_img = generated_img.clip(-1, 1)
         generated_img_btw_0_1 = (generated_img + 1) / 2
@@ -574,10 +578,13 @@ def generate_images_and_save_heatmap(
 @click.option('--alpha_scheduler', help='Use alpha scheduler', is_flag=True)
 @click.option('--particle_guidance_distance', help='Particle guidance distance, l2 or iou', metavar='STR', type=str, default='l2')
 @click.option('--path_classifier', help='Path to the classifier model', metavar='STR', type=str, default='/Users/juliankleutgens/PycharmProjects/edm-main/mnist_resnet18_5e.pth')
+@click.option('--separate_grad_and_pg', help='Separate the gradient and particle guidance', is_flag=True)
+@click.option('--generate_batch_sequentially', help='Generate the batch sequentially', is_flag=True)
 
 def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,
          local_computer, true_probability=None, num_seq=1, mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None,
-         pg_heatmap = False, gamma_scheduler=False, alpha_scheduler=False, particle_guidance_distance='l2', path_classifier=None):
+         pg_heatmap = False, gamma_scheduler=False, alpha_scheduler=False, particle_guidance_distance='l2', path_classifier=None,
+         separate_grad_and_pg=False, generate_batch_sequentially=False):
     device = torch.device('cpu' if local_computer else 'cuda')
     results = []
     mean_uniform = []
@@ -590,8 +597,8 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                          "local_computer": local_computer, "device": device, "num_seq": num_seq, "mode":mode,
                          "num_of_directions":num_of_directions, "particle_guidance_factor":particle_guidance_factor,
                          "digit_filter":digit_filter, "pg_heatmap":pg_heatmap, "gamma_scheduler":gamma_scheduler, "alpha_scheduler":alpha_scheduler,
-                         "particle_guidance_distance":particle_guidance_distance, "path_classifier":path_classifier
-                         })
+                         "particle_guidance_distance":particle_guidance_distance, "path_classifier":path_classifier, "separate_grad_and_PG": separate_grad_and_pg,
+                         "generate_batch_sequentially":generate_batch_sequentially})
 
     digit_prob = {str(i): [] for i in range(10)}
     s_noise = 1
@@ -605,7 +612,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     # add zero to the list
     particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # [ 1.5, 2, 2.5, 3]#
     particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
-    particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
+    #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
     num_seq_iter = range(num_seq)
 
     safe_digits = {}
@@ -620,7 +627,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                     sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device,
                     particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, s_noise=s_noise,
                     gamma_scheduler=gamma_scheduler, alpha_scheduler=alpha_scheduler, particle_guidance_distance=particle_guidance_distance, iteration=i,
-                    path_classifier=path_classifier
+                    path_classifier=path_classifier, separate_grad_and_PG=separate_grad_and_pg, generate_batch_sequentially=generate_batch_sequentially,
                 )
 
                 if pg_heatmap:

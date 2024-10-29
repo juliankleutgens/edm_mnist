@@ -120,7 +120,7 @@ def edm_sampler(
     S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False,
     plot_diffusion=False, image=None, particle_guidance_factor=0,
     gamma_scheduler=False, alpha_scheduler=False,
-    particle_guidance_distance='l2'
+    particle_guidance_distance='l2', separate_grad_and_PG=False
 ):
     # Adjust noise levels based on what's supported by the network.
     if net.num_cond_frames > 0:
@@ -132,10 +132,13 @@ def edm_sampler(
     sigma_min = max(sigma_min, net.sigma_min)
     sigma_max = min(sigma_max, net.sigma_max)
 
+    separate_grad_and_PG = separate_grad_and_PG and particle_guidance_factor > 0
+
     # Time step discretization.
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
     t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+
     # cosine annealing
     gamma_schedule = [cosine_annealing(s, num_steps, 0, 1) for s in range(num_steps)] if gamma_scheduler else [1 for s in range(num_steps)]
     alpha_schedule = [cosine_annealing(s, num_steps, 0, 1) for s in range(num_steps)] if alpha_scheduler else [1 for s in range(num_steps)]
@@ -151,44 +154,52 @@ def edm_sampler(
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0] * 0.1
     gamma_arr = []
+
+    # make dooble the loop if separate_grad_and_PG is True such that PG and the gradient are added in different steps
+    extra_loop = 2 if separate_grad_and_PG else 1
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
-        x_cur = x_next
+        for j in range(extra_loop):
 
-        # Increase noise temporarily.
-        gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
-        gamma_arr.append(gamma)
-        t_hat = net.round_sigma(t_cur + gamma * t_cur)
-        x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
-        # if S_churn is 0, gamma is 0, t_hat is equal to t_cur, x_hat is equal to x_cur
+            x_cur = x_next
 
-        if net.num_cond_frames > 0:
-            x_input = torch.cat([cond_frames, x_hat], dim=1)
-        else:
-            x_input = x_hat
+            # Increase noise temporarily.
+            gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
+            gamma_arr.append(gamma)
+            t_hat = net.round_sigma(t_cur + gamma * t_cur)
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+            # if S_churn is 0, gamma is 0, t_hat is equal to t_cur, x_hat is equal to x_cur
 
-        # Euler step.
-        # plot x_input as latent space
-        denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
-        #d_cur = (x_hat - denoised) / t_hat
-        pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
-        particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
-        if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any():
-            print('Nan or Inf in pg_grad')
-            d_cur = (x_hat - denoised) / t_hat
-        else:
-            d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
-
-        x_next = x_hat + (t_next - t_hat) * d_cur
-
-        # Apply 2nd order correction.
-        if i < num_steps - 1:
             if net.num_cond_frames > 0:
                 x_input = torch.cat([cond_frames, x_hat], dim=1)
             else:
                 x_input = x_hat
-            denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
-            d_prime = (x_next - denoised) / t_next
-            x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+
+            # Euler step.
+            # plot x_input as latent space
+            denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
+            #d_cur = (x_hat - denoised) / t_hat
+            pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
+            particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
+            if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any() or (separate_grad_and_PG and j == 0):
+                print('Nan or Inf in pg_grad')
+                d_cur = (x_hat - denoised) / t_hat
+            elif (separate_grad_and_PG and j == 1):
+                d_cur = - particle_guidance_grad
+            else:
+                d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
+
+            x_next = x_hat + (t_next - t_hat) * d_cur
+
+            # Apply 2nd order correction.
+            if i < num_steps - 1:
+                if net.num_cond_frames > 0:
+                    x_input = torch.cat([cond_frames, x_hat], dim=1)
+                else:
+                    x_input = x_hat
+                denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
+                d_prime = (x_next - denoised) / t_next
+                if j == 0:
+                    x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
 
         # Save intermediate images.
         # Convert x_next to an image and store it
@@ -592,7 +603,8 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
         sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
         if i == 1:
             plot_diffusion = False
-        images, intermediate_images = sampler_fn(net, latents, class_labels,image=image, randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
+        images, intermediate_images = sampler_fn(net, latents, class_labels,image=image,
+                                                 randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()

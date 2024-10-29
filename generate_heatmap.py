@@ -19,7 +19,8 @@ from scipy.stats import binom
 import time
 from collections import Counter
 import wandb
-from generate_conditional_frames import edm_sampler
+from generate_conditional_frames import edm_sampler, cosine_annealing, plot_diffusion_process_conditional
+import math
 
 # ----------------------------- utility functions -----------------------------
 # -----------------------------------------------------------------------------
@@ -422,13 +423,193 @@ def calculate_quality_of_images(img_cat_btw_0_1, vectors, conditional_image):
 
     return quality_of_images
 """
+def compute_distance_matrix(xs, distance='l2'):
+    n = xs.shape[0]
+    if distance not in ['l2', 'iou']:
+        raise ValueError(f"Invalid distance metric: {distance}")
+
+    if distance == 'l2':
+        distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
+
+    # Compute matrix of Intersection over Union (IoU) distances
+    elif distance == 'iou':
+        xs_flat = xs.flatten(1)  # Flatten each tensor to 1D
+
+        # Iterate through pairs and calculate IoU for each
+        distance_matrix = torch.zeros((n, n), device=xs.device)
+        for i in range(n):
+            for j in range(i + 1, n):
+                intersection = torch.min(xs_flat[i], xs_flat[j]).sum()  # Element-wise minimum
+                union = torch.max(xs_flat[i], xs_flat[j]).sum()  # Element-wise maximum
+                iou = intersection / union
+                distance_matrix[i, j] = 1 - iou  # IoU distance is 1 - IoU
+                distance_matrix[j, i] = distance_matrix[i, j]
+    return distance_matrix
+
+
+def compute_particle_guidance_grad_set(x, gamma=1, alpha=1, distance='l2', set_reference=None):
+    xs = torch.cat((set_reference, x), dim=0) if set_reference is not None else x
+    with torch.enable_grad():
+        xs = (xs.detach().clone() + 1) * 0.5  # transform from value range [-1,1] to [0,1]
+        xs.requires_grad = True
+        n = xs.shape[0]
+
+        # Compute matrix of L2 distances
+        #  xs.flatten(1).shape = torch.Size([8, 1024])
+        distance_matrix = compute_distance_matrix(xs, distance=distance)
+
+        # Only consider upper triangular distance matrix, rest are duplicate entries or distance to self
+        triu_indices = torch.triu_indices(n, n, offset=1) # triu_indices = torch.Size([2, 28]) = (n^2 - n) / 2
+        distance_list = distance_matrix[triu_indices[0], triu_indices[1]]
+
+        # Normalizing factor
+        h_t = distance_list.median() ** 2 / math.log(n)
+
+        # Sum of RBF kernels
+        rbf_sum = (-distance_list * gamma / h_t).exp().sum()
+        rbf_sum = rbf_sum * alpha
+        rbf_sum.backward()
+        """
+        xs_grad = torch.zeros_like(xs)
+        # do gradient by hand
+        counter = 0
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    xs_grad[i] += -gamma * (xs[i] - xs[j]) * (-distance_matrix[i, j] * gamma / h_t).exp() / h_t
+                    counter += 1
+        xs_grad_torch = xs.grad
+        """
+        return xs.grad
+
+
+def edm_sampler2(
+    net, latents, class_labels=None, randn_like=torch.randn_like,
+    num_steps=18, sigma_min=0.002, sigma_max=80, rho=7,
+    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False,
+    plot_diffusion=False, image=None, particle_guidance_factor=0,
+    gamma_scheduler=False, alpha_scheduler=False,
+    particle_guidance_distance='l2', separate_grad_and_PG=False
+):
+    # Adjust noise levels based on what's supported by the network.
+    if net.num_cond_frames > 0:
+        cond_frames = image[:, :net.num_cond_frames, :, :]
+    else:
+        cond_frames = None
+
+    sigma_min = max(sigma_min, net.sigma_min)
+    sigma_max = min(sigma_max, net.sigma_max)
+
+    separate_grad_and_PG = separate_grad_and_PG and particle_guidance_factor > 0
+
+    # Time step discretization.
+    step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
+    t_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
+    t_steps = torch.cat([net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]) # t_N = 0
+
+    # cosine annealing
+    gamma_schedule = [1 for s in range(num_steps)]
+    alpha_schedule = [cosine_annealing(s, num_steps, 0, 1) for s in range(num_steps)] if alpha_scheduler else [1 for s in range(num_steps)]
+
+    # plot t steps
+    intermediate_images = []
+    intermediate_denoised = []
+    intermediate_denoised_prime = []
+    intermediate_direction_cur = []
+    particle_guidance_grad_images = []
+
+
+    # Main sampling loop.
+    gamma_arr = []
+
+    # make dooble the loop if separate_grad_and_PG is True such that PG and the gradient are added in different steps
+    batchsize = latents.shape[0]
+    for j in range(batchsize):
+        x_next = latents[j].to(torch.float64).unsqueeze(0) * t_steps[0] * 0.1
+        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
+            x_cur = x_next
+
+            # Increase noise temporarily.
+            gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
+            t_hat = net.round_sigma(t_cur + gamma * t_cur)
+            x_hat = x_cur + (t_hat ** 2 - t_cur ** 2).sqrt() * S_noise * randn_like(x_cur)
+            # if S_churn is 0, gamma is 0, t_hat is equal to t_cur, x_hat is equal to x_cur
+
+            if net.num_cond_frames > 0:
+                x_input = torch.cat([cond_frames, x_hat], dim=1)
+            else:
+                x_input = x_hat
+
+            # Euler step.
+            # plot x_input as latent space
+            denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
+            # d_cur = (x_hat - denoised) / t_hat
+            if not j == 0:
+                pg_grad = compute_particle_guidance_grad_set(denoised, gamma=gamma_schedule[i], alpha=alpha_schedule[i],
+                                                             distance=particle_guidance_distance, set_reference=set_of_generated_images)
+                pg_grad = pg_grad[0:1]
+            else:
+                pg_grad = torch.zeros_like(denoised)
+            particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
+            if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any():
+                print('Nan or Inf in pg_grad')
+                d_cur = (x_hat - denoised) / t_hat
+            else:
+                d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
+
+            x_next = x_hat + (t_next - t_hat) * d_cur
+
+            # Apply 2nd order correction.
+            if i < num_steps - 1:
+                if net.num_cond_frames > 0:
+                    x_input = torch.cat([cond_frames, x_hat], dim=1)
+                else:
+                    x_input = x_hat
+                denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
+                d_prime = (x_next - denoised) / t_next
+                x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+        set_of_generated_images = torch.cat((set_of_generated_images, x_next), dim=0)  if 'set_of_generated_images' in locals() else x_next
+
+        # Save intermediate images.
+        # Convert x_next to an image and store it
+    if plot_diffusion:
+        intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+
+        denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
+
+        direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
+
+        prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
+
+        particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2,
+                                                                                                                   3,
+                                                                                                                   1).cpu().numpy()
+        particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
+
+    if plot_diffusion:
+        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
+        #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
+        plot_diffusion_process_conditional(intermediate_images, images=image)
+        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
+        #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
+    #plot_gamma(gamma_arr, S_churn)
+    return set_of_generated_images, intermediate_images
+
+
+
+
 # ----------------------------- generating function -----------------------------
 # ------------------------------------------------------------------------------
 def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         network_pkl, outdir, moving_mnist_path, num_images=100, max_batch_size=1, num_steps=18,
         sigma_min=0.002, sigma_max=80, S_churn=0.9, rho=7, local_computer=False, device=torch.device('cuda')
         ,mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None, s_noise=1
-        , gamma_scheduler=False, alpha_scheduler=False,particle_guidance_distance='l2'):
+        , gamma_scheduler=False, alpha_scheduler=False,particle_guidance_distance='l2', separate_grad_and_PG=False,
+        generate_batch_sequentially=False):
     """Generate images with S_churn=0.9 and create a heatmap of pixel intensities."""
 
 
@@ -491,7 +672,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 
     directions = get_directions(num_of_directions, mode)
     # Store sum of images for the heatmap
-
+    sampler = edm_sampler2 if generate_batch_sequentially else edm_sampler
     image_sum = None
     j = 0
     generated_images = []
@@ -508,11 +689,15 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         rnd = StackedRandomGenerator(device, batch_seeds)
         latents = rnd.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
         # Generate the image with S_churn=0.9
-        generated_img, _ = edm_sampler(
-            net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-            rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor,
-            gamma_scheduler=gamma_scheduler,particle_guidance_distance=particle_guidance_distance, alpha_scheduler=alpha_scheduler
-        )
+        generated_img, _ = sampler(
+                net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
+                rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise,
+                particle_guidance_factor=particle_guidance_factor,
+                gamma_scheduler=gamma_scheduler, particle_guidance_distance=particle_guidance_distance,
+                alpha_scheduler=alpha_scheduler,
+                separate_grad_and_PG=separate_grad_and_PG
+            )
+
         generated_img = generated_img.clip(-1, 1)
 
         img_btw_0_1 = (generated_img + 1) / 2
@@ -561,20 +746,6 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 
     count = dict(Counter(estimated_directions))
     prob_estimated = {k: v / num_images for k, v in count.items()}
-    """
-    try:
-        if mode == 'horizontal':
-            print(f"The probability of going to right is: {prob_estimated[0]}")
-            print(f"The digit moved to number of times to right is: {count[0]} out of {num_images}")
-        elif mode == 'circle' and num_of_directions == 4 or num_of_directions == 8:
-            print(f"The probability of going to left is: {prob_estimated[0]}")
-            print(f"The digit moved to number of times to left (stronger probability) is: {count[0]} out of {num_images}")
-            mean = np.mean([value for key, value in prob_estimated.items() if key != 0])
-            print(f"The mean of the other directions is: {mean}")
-    except KeyError:
-        print(f"KeyError: {count}")
-
-    """
 
     if local_computer and plotting:
         plot_images_with_centroids_reference(image=img_cat_btw_0_1, centroids=centroids_estimated, centroids_reference=centroids[-2:])
@@ -612,10 +783,13 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 @click.option('--gamma_scheduler', help='Use gamma scheduler', is_flag=True)
 @click.option('--alpha_scheduler', help='Use alpha scheduler', is_flag=True)
 @click.option('--particle_guidance_distance', help='Particle guidance distance, l2 or iou', metavar='STR', type=str, default='l2')
+@click.option('--separate_grad_and_pg', help='Separate gradient and particle guidance', is_flag=True)
+@click.option('--generate_batch_sequentially', help='Generate the batch sequentially', is_flag=True)
 
 def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, sigma_max, s_churn, rho,moving_mnist_path,
          local_computer, true_probability=None, num_seq=1, mode='horizontal', num_of_directions=2, particle_guidance_factor=0, digit_filter=None,
-         pg_heatmap = False, gamma_scheduler=False, alpha_scheduler=False, particle_guidance_distance='l2'):
+         pg_heatmap = False, gamma_scheduler=False, alpha_scheduler=False, particle_guidance_distance='l2', separate_grad_and_pg=False,
+         generate_batch_sequentially=False):
     device = torch.device('cpu' if local_computer else 'cuda')
     results = []
     mean_uniform = []
@@ -648,7 +822,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         # add zero to the list
         particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75 , 1]#[ 1.5, 2, 2.5, 3]#
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
-        particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
+        #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
         num_seq_iter = range(num_seq)
 
     else:
@@ -658,6 +832,29 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     safe_num_directions = {}
     safe_quality = {}
     count_print = 0 # to count the number of iterations
+
+    generation_kwargs = {
+        "network_pkl": network_pkl,
+        "outdir": outdir,
+        "num_images": num_images,
+        "max_batch_size": max_batch_size,
+        "num_steps": num_steps,
+        "mode": mode,
+        "num_of_directions": num_of_directions,
+        "sigma_min": sigma_min,
+        "sigma_max": sigma_max,
+        "rho": rho,
+        "local_computer": local_computer,
+        "device": device,
+        "digit_filter": digit_filter,
+        "s_noise": s_noise,
+        "gamma_scheduler": gamma_scheduler,
+        "alpha_scheduler": alpha_scheduler,
+        "particle_guidance_distance": particle_guidance_distance,
+        "separate_grad_and_PG": separate_grad_and_pg,
+        "generate_batch_sequentially": generate_batch_sequentially
+    }
+
     for s_churn in S_noise_logarithmic:
         for particle_guidance_factor in particle_guidance_factor_logarithmic:
             # we want to have the same number of images for each case
@@ -670,13 +867,13 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
             dataset_sampler = torch.utils.data.SequentialSampler(dataset_obj)
             print(f"Count: {count_print}")
             for i in num_seq_iter:
-                prob_estimated, digit, mean_quality = generate_images_and_save_heatmap(
-                    network_pkl=network_pkl, outdir=outdir, num_images=num_images, max_batch_size=max_batch_size,
-                    num_steps=num_steps, mode=mode, num_of_directions=num_of_directions,
-                    sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device, moving_mnist_path=moving_mnist_path,
-                    particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, dataset_obj=dataset_obj, dataset_sampler=dataset_sampler, s_noise=s_noise,
-                    gamma_scheduler=gamma_scheduler, alpha_scheduler=alpha_scheduler, particle_guidance_distance=particle_guidance_distance,
-                )
+                generation_kwargs.update({
+                    "S_churn": s_churn,
+                    "particle_guidance_factor": particle_guidance_factor,
+                })
+
+                prob_estimated, digit, mean_quality = generate_images_and_save_heatmap(dataset_obj=dataset_obj, dataset_sampler=dataset_sampler,
+                    moving_mnist_path=moving_mnist_path, **generation_kwargs)
 
                 if pg_heatmap:
                     key = f"S_churn: {s_churn:.2f}, Particle Guidance: {particle_guidance_factor:.2f}"
