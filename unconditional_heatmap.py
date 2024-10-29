@@ -529,7 +529,10 @@ def generate_images_and_save_heatmap(
             image_sum += np.sum(img_np.astype(np.float32), axis=0) if img_np.shape[0] > 1 else img_np[0].astype(np.float32)
 
         config_in_title = f"S_churn_{S_churn:.2f}_PG_{particle_guidance_factor:.2f}"
-        plot_the_batch_of_generated_images(generated_images=generated_img_btw_0_1.cpu(), config_in_title = config_in_title,local_computer=(local_computer and plotting))
+        try:
+            plot_the_batch_of_generated_images(generated_images=generated_img_btw_0_1.cpu(), config_in_title = config_in_title,local_computer=(local_computer and plotting))
+        except Exception as e:
+            print(f"Error: {e}")
         #plot_the_batch_of_generated_images(generated_img_zero_background.cpu(), (local_computer and plotting))
 
 
