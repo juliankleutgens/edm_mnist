@@ -95,7 +95,10 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
 
     # Plot the heatmap
     plt.figure(figsize=(8, 6))
-    plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
+    if mode == 'quality' and np.nanmax(heatmap_data) < 15:
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=15)
+    else:
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
 
     # Set x and y axis labels with corresponding values
     # For particle guidance factor logarithmic (y-axis)
@@ -118,6 +121,8 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
         plt.title('Mean Number of Directions')
     elif mode == 'quality':
         plt.colorbar(label='Mean Quality of Images')
+        # scale the colorbar up to 15 when max value is less than 15
+
         plt.xlabel('Noise weight of S_churn')
         plt.ylabel('Particle Guidance factor')
         plt.title('Mean Quality of Images')
@@ -819,9 +824,11 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
         S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
+        S_noise_logarithmic = [0]
         # add zero to the list
         particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75 , 1]#[ 1.5, 2, 2.5, 3]#
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
+        particle_guidance_factor_logarithmic = [10, 100, 1000, 10000]
         #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
         num_seq_iter = range(num_seq)
 

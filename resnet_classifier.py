@@ -120,6 +120,7 @@ def get_prediction(image, device, path):
     model = ResNetForMNIST()
     model.load_state_dict(torch.load(path, map_location=device))
     model.eval()
+    model.to(device)
 
     transform = transforms.Compose([
         transforms.Resize((224, 224)),  # Resize to 224x224
@@ -130,7 +131,7 @@ def get_prediction(image, device, path):
     image = image.to(device).float()
     features, output = model(image)
     _, predicted = torch.max(output.data, 1)
-    return predicted
+    return predicted, features
 
 
 

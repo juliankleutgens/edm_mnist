@@ -518,7 +518,7 @@ def generate_images_and_save_heatmap(
         generated_img = generated_img.clip(-1, 1)
         generated_img_btw_0_1 = (generated_img + 1) / 2
         generated_img_zero_background = make_image_background_zero(generated_img_btw_0_1)
-        batch_predicted_digits = get_prediction(generated_img_zero_background, device_cpu, path_classifier)
+        batch_predicted_digits, _ = get_prediction(generated_img_zero_background, device_cpu, path_classifier)
 
         img_np = (generated_img * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         generated_images.append(img_np[0])
