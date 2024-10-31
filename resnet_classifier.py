@@ -244,9 +244,9 @@ if __name__ == '__main__':
         transforms.Normalize((0.5,), (0.5,))  # Normalize with mean=0.5, std=0.5 for grayscale images
     ])
 
-    moving_mnist_path = '/Users/juliankleutgens/data_edm/data/MNIST'
+    moving_mnist_path = '/cephyr/users/julianjo/Alvis/data' if torch.cuda.is_available() else '/Users/juliankleutgens/data_edm/data/MNIST'
     dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=1, num_digits=1, image_size=32,
-                              mode='free',
+                              mode='middel',
                               deterministic=False, log_direction_change=True, step_length=0.1,
                               let_last_frame_after_change=False, use_label=True)
     dataset_sampler = torch.utils.data.DataLoader(
