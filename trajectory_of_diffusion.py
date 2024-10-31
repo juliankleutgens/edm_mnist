@@ -8,21 +8,33 @@ import umap.umap_ as umap
 from moving_mnist import MovingMNIST
 from resnet_classifier import get_prediction
 import os
-from unconditional_heatmap import StackedRandomGenerator
 
 # Plotting the 2D visualization
-# Plotting the 2D visualization
+class StackedRandomGenerator:
+    def __init__(self, device, seeds):
+        super().__init__()
+        self.generators = [torch.Generator(device).manual_seed(int(seed) % (1 << 32)) for seed in seeds]
+
+    def randn(self, size, **kwargs):
+        assert size[0] == len(self.generators)
+        return torch.stack([torch.randn(size[1:], generator=gen, **kwargs) for gen in self.generators])
+
+    def randn_like(self, input):
+        return self.randn(input.shape, dtype=input.dtype, layout=input.layout, device=input.device)
+
+    def randint(self, *args, size, **kwargs):
+        assert size[0] == len(self.generators)
+        return torch.stack([torch.randint(*args, size=size[1:], generator=gen, **kwargs) for gen in self.generators])
+
+
 def plot_2d(features_2d, labels, title, new_points=None):
-    # Ensure the label array length matches the number of data points
-    labels = labels[:features_2d.shape[0]]
-    # add a new label for the new points
-    if new_points is not None:
-        labels = np.concatenate((labels, np.full(new_points.shape[0], labels.max() + 1).reshape(-1, 1)))
 
     plt.figure(figsize=(10, 8))
     scatter = plt.scatter(features_2d[:, 0], features_2d[:, 1], c=labels, cmap='tab10', alpha=0.7)
+
     if new_points is not None:
-        plt.scatter(new_points[:, 0], new_points[:, 1], c='red', label='New Points', marker='x')
+        for i in range(new_points.shape[0]):
+            plt.scatter(new_points[i, 0], new_points[i, 1], c='red', label=f'New Point {i + 1}', marker='x')
     plt.colorbar(scatter, ticks=range(10))  # Assuming labels are integers in range(0, 9)
     plt.title(title)
     plt.xlabel('Component 1')
@@ -52,7 +64,7 @@ def get_the_features_and_the_2d_map():
     # Extract features
     try:
         features_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/features2.npy')
-        labels = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/labels2.npy')
+        labels_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/labels2.npy')
         print("Features and labels loaded from disk")
         get_new_features = False
     except FileNotFoundError:
@@ -90,10 +102,8 @@ def get_the_features_and_the_2d_map():
     plot_2d(features_2d_tsne, labels_np, title="t-SNE Visualization of MovingMNIST")
     plot_2d(features_2d_umap, labels_np, title="UMAP Visualization of MovingMNIST")
 
-def add_new_unlabeled_images_into_2d_featuremap(images_to_add, feature_pwd= os.path.join(os.getcwd(), 'features2.npy'),
-                                         labels_pwd= os.path.join(os.getcwd(), 'labels2.npy')):
-
-
+def add_new_unlabeled_images_into_2d_featuremap(images_to_add, labels_to_add=None, feature_pwd=os.path.join(os.getcwd(), 'features2.npy'),
+                                         labels_pwd=os.path.join(os.getcwd(), 'labels2.npy')):
     # Load the features and labels
     features = np.load(feature_pwd)
     labels = np.load(labels_pwd)
@@ -111,6 +121,12 @@ def add_new_unlabeled_images_into_2d_featuremap(images_to_add, feature_pwd= os.p
     # Use the same UMAP or t-SNE model to transform the new points
     umap_reducer = umap.UMAP(n_components=2, random_state=42)
     features_2d_combined = umap_reducer.fit_transform(features_combined)
+
+    # labels
+    # add a new label for the new points
+    if labels_to_add is None:
+        labels = np.concatenate((labels, np.full(new_features.shape[0], labels.max() + 1).reshape(-1, 1)))
+
 
     # Plot the original features and the new points
     new_points_2d = features_2d_combined[-new_features_np.shape[0]:]

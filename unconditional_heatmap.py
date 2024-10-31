@@ -22,6 +22,8 @@ import wandb
 from generate_conditional_frames import edm_sampler
 from resnet_classifier import get_prediction
 from generate_heatmap import edm_sampler2
+from trajectory_of_diffusion import add_new_unlabeled_images_into_2d_featuremap
+
 
 # ----------------------------- utility functions -----------------------------
 # -----------------------------------------------------------------------------
@@ -509,9 +511,9 @@ def generate_images_and_save_heatmap(
         rnd = StackedRandomGenerator(device, batch_seeds)
         latents = rnd.randn([batch_size, net.img_channels, net.img_resolution, net.img_resolution], device=device)
         # Generate the image with S_churn=0.9
-        generated_img, _ = sampler(
+        generated_img, image_steps = sampler(
             net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-            rho=rho, S_churn=S_churn, image=None, plot_diffusion=plotting, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor,
+            rho=rho, S_churn=S_churn, image=None, plot_diffusion=True, S_noise=s_noise, particle_guidance_factor=particle_guidance_factor,
             gamma_scheduler=gamma_scheduler,particle_guidance_distance=particle_guidance_distance, alpha_scheduler=alpha_scheduler,
             separate_grad_and_PG=separate_grad_and_PG
         )
@@ -546,6 +548,10 @@ def generate_images_and_save_heatmap(
         print(f"Error: {e}")
     # batch_predicted_digits to list of integers
     batch_predicted_digits = [int(digit) for digit in batch_predicted_digits]
+    image_steps_in_big_tensor = image_steps[-1]
+    #for i in range(1, len(image_steps)):
+     #   image_steps_in_big_tensor = torch.cat((image_steps_in_big_tensor, image_steps[i]), dim=0)
+    add_new_unlabeled_images_into_2d_featuremap(generated_img_zero_background)
     return batch_predicted_digits
 
 # ----------------------------- main function -----------------------------
@@ -612,10 +618,12 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
     S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
     S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
+    S_noise_logarithmic = [0]
     # add zero to the list
     particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # [ 1.5, 2, 2.5, 3]#
     particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
     #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
+    particle_guidance_factor_logarithmic = [0, 1]
     num_seq_iter = range(num_seq)
 
     safe_digits = {}

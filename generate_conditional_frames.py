@@ -149,7 +149,7 @@ def edm_sampler(
     intermediate_denoised_prime = []
     intermediate_direction_cur = []
     particle_guidance_grad_images = []
-
+    intermediate_images_output = []
 
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0] * 0.1
@@ -203,9 +203,11 @@ def edm_sampler(
 
         # Save intermediate images.
         # Convert x_next to an image and store it
+        intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+        intermediate_images.append(intermediate_image[0])
+        intermediate_images_output.append(x_next)
         if plot_diffusion:
-            intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-            intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+            # Save the first image for plotting
 
             denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
@@ -227,7 +229,7 @@ def edm_sampler(
         #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
         #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
     #plot_gamma(gamma_arr, S_churn)
-    return x_next, intermediate_images
+    return x_next, intermediate_images_output
 
 
 # Function to plot the intermediate images
