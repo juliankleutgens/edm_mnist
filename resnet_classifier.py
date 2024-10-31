@@ -171,7 +171,7 @@ def train(model, dataset_iterator, criterion, optimizer, device, transform, num_
             optimizer.step()
 
             running_loss += loss.item()
-            
+
 
         print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {running_loss / len(dataset_iterator):.4f}")
 
@@ -231,7 +231,7 @@ if __name__ == '__main__':
     ])
 
     # Check if GPU is available
-    device = torch.device("mps")# if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # Initialize the model, move it to the device
     model = ResNetForMNIST(num_classes=11).to(device)
     # Loss function and optimizer
