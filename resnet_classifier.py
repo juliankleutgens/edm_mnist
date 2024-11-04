@@ -202,9 +202,9 @@ def test(model, test_loader, device):
     print(f'Accuracy on test set: {accuracy:.2f}%')
 
 
-def get_prediction(image, device, path):
+def get_prediction(image, device, path, num_classes=10):
     # load the model pretrained model from path
-    model = ResNetForMNIST(num_classes=11)
+    model = ResNetForMNIST(num_classes=num_classes)
     model.load_state_dict(torch.load(path, map_location=device))
     model.eval()
     model.to(device)

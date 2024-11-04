@@ -30,5 +30,6 @@ dataset/
 *.tar.gz
 *.zip
 *.npy
+*.pth
 /mnist_resnet18_5e.pth
 /mnist_resnet18.pth

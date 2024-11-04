@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import umap.umap_ as umap
 from moving_mnist import MovingMNIST
-from resnet_classifier import get_prediction
+from resnet_classifier import get_prediction, add_noise_to_image_like_diffusion
 import os
 
 # Plotting the 2D visualization
@@ -39,11 +39,9 @@ def plot_2d(features_2d, labels, title, new_points=None):
     plt.title(title)
     plt.xlabel('Component 1')
     plt.ylabel('Component 2')
-    if new_points is not None:
-        plt.legend()
     plt.show()
 
-def get_the_features_and_the_2d_map():
+def get_the_features_and_the_2d_map(num_classes=10):
     # Load your dataset
     moving_mnist_path = '/Users/juliankleutgens/data_edm/data/MNIST'
     dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=1, num_digits=1, image_size=32,
@@ -54,17 +52,27 @@ def get_the_features_and_the_2d_map():
     dataset_loader = torch.utils.data.DataLoader(dataset=dataset_obj, batch_size=6000, shuffle=True)
     images, labels, _ = next(iter(dataset_loader))
     images = images.squeeze(-1)  # Remove the channel dimension
-    # Extract features using a pre-trained model
-    model = models.resnet18(pretrained=True)
-    model.fc = nn.Identity()  # Remove the classification layer to get features
 
-    # Make sure the model is in evaluation mode
-    model.eval()
+    batch_seeds = [i for i in range(300)]
+    rnd = StackedRandomGenerator('cpu', batch_seeds)
+
+    clear_images = False
+    if num_classes == 11:
+        labels = torch.cat((labels, torch.zeros(labels.size(0), 1, 1)), dim=2) if num_classes == 11 else labels
+        if clear_images:
+            latents = rnd.randn([len(batch_seeds), 1, 32, 32], device='cpu')
+            images = torch.cat((images, latents), dim=0)
+
+            labels_for_latents = torch.zeros(latents.size(0), 1, 11)
+            labels_for_latents[:, :, 10] = labels_for_latents[:, :, 10] + 1
+            labels = torch.cat((labels, labels_for_latents), dim=0)
+        else:
+            images, labels = add_noise_to_image_like_diffusion(images, labels)
 
     # Extract features
     try:
-        features_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/features2.npy')
-        labels_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/labels2.npy')
+        features_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/features_noise2.npy')
+        labels_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/labels_noise2.npy')
         print("Features and labels loaded from disk")
         get_new_features = False
     except FileNotFoundError:
@@ -73,15 +81,16 @@ def get_the_features_and_the_2d_map():
     if get_new_features:
         with torch.no_grad():
         # If images are grayscale, convert to 3 channels
-            _, features = get_prediction(images, device='cpu', path='/Users/juliankleutgens/PycharmProjects/edm-main/mnist_resnet18_5e.pth')
+            _, features = get_prediction(images, device='cpu',num_classes=num_classes,
+                                        path='/Users/juliankleutgens/PycharmProjects/edm-main/mnist_resnet18_noise_class.pth')
         # Convert features and labels to numpy
         features_np = features.numpy()
         labels = torch.argmax(labels, dim=-1)
         labels_np = labels.numpy()
 
         # save labels and features
-        np.save('/Users/juliankleutgens/PycharmProjects/edm-main/features2.npy', features_np)
-        np.save('/Users/juliankleutgens/PycharmProjects/edm-main/labels2.npy', labels_np)
+        np.save('/Users/juliankleutgens/PycharmProjects/edm-main/features_noise_anno.npy', features_np)
+        np.save('/Users/juliankleutgens/PycharmProjects/edm-main/labels_noise_anno.npy', labels_np)
 
 
 
@@ -110,7 +119,8 @@ def add_new_unlabeled_images_into_2d_featuremap(images_to_add, labels_to_add=Non
 
     # Extract features for the new images
     with torch.no_grad():
-        _, new_features = get_prediction(images_to_add, device='cpu', path='/Users/juliankleutgens/PycharmProjects/edm-main/mnist_resnet18_5e.pth')
+        _, new_features = get_prediction(images_to_add, device='cpu',num_classes=10,
+        path='/Users/juliankleutgens/PycharmProjects/edm-main/mnist_resnet18_5e.pth')
 
     # Convert new features to numpy
     new_features_np = new_features.numpy()
@@ -135,7 +145,7 @@ def add_new_unlabeled_images_into_2d_featuremap(images_to_add, labels_to_add=Non
 
 
 if __name__ == '__main__':
-    #get_the_features_and_the_2d_map()
+    get_the_features_and_the_2d_map(num_classes=11)
     batch_seeds = [i for i in range(100)]
     rnd = StackedRandomGenerator('cpu', batch_seeds)
     latents = rnd.randn([len(batch_seeds), 1, 32, 32], device='cpu')

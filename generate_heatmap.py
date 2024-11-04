@@ -453,7 +453,7 @@ def compute_distance_matrix(xs, distance='l2'):
 
 
 def compute_particle_guidance_grad_set(x, gamma=1, alpha=1, distance='l2', set_reference=None):
-    xs = torch.cat((set_reference, x), dim=0) if set_reference is not None else x
+    xs = torch.cat((x,set_reference), dim=0) if set_reference is not None else x
     with torch.enable_grad():
         xs = (xs.detach().clone() + 1) * 0.5  # transform from value range [-1,1] to [0,1]
         xs.requires_grad = True
@@ -824,11 +824,11 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
         S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
-        S_noise_logarithmic = [0]
+        #S_noise_logarithmic = [0]
         # add zero to the list
         particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75 , 1]#[ 1.5, 2, 2.5, 3]#
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
-        particle_guidance_factor_logarithmic = [10, 100, 1000, 10000]
+        #particle_guidance_factor_logarithmic = [10, 100, 1000, 10000]
         #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
         num_seq_iter = range(num_seq)
 

@@ -549,9 +549,26 @@ def generate_images_and_save_heatmap(
     # batch_predicted_digits to list of integers
     batch_predicted_digits = [int(digit) for digit in batch_predicted_digits]
     image_steps_in_big_tensor = image_steps[-1]
-    #for i in range(1, len(image_steps)):
-     #   image_steps_in_big_tensor = torch.cat((image_steps_in_big_tensor, image_steps[i]), dim=0)
-    add_new_unlabeled_images_into_2d_featuremap(generated_img_zero_background)
+    if plotting or True:
+        for i in range(1, len(image_steps)):
+            image_steps_in_big_tensor = torch.cat((image_steps_in_big_tensor, image_steps[i]), dim=0)
+        # trajectory of the diffusion for one generated image
+        one_image_diffusion = image_steps_in_big_tensor[0][0].unsqueeze(0).unsqueeze(0)
+        for i in range(1, len(image_steps_in_big_tensor)):
+            one_image_diffusion = torch.cat((one_image_diffusion, image_steps_in_big_tensor[i][0].unsqueeze(0).unsqueeze(0)), dim=0)
+
+        feature_pwd = os.path.join(os.getcwd(), 'features2.npy')
+        labels_pwd = os.path.join(os.getcwd(), 'labels2.npy')
+        #add_new_unlabeled_images_into_2d_featuremap(images_to_add=generated_img_zero_background,feature_pwd=feature_pwd, labels_pwd=labels_pwd)
+
+        # same with the trajectory of the diffusion
+        feature_pwd = os.path.join(os.getcwd(), 'features_noise_anno.npy')
+        labels_pwd = os.path.join(os.getcwd(), 'labels_noise_anno.npy')
+        add_new_unlabeled_images_into_2d_featuremap(images_to_add=generated_img_zero_background,
+                                                    feature_pwd=feature_pwd, labels_pwd=labels_pwd)
+
+
+
     return batch_predicted_digits
 
 # ----------------------------- main function -----------------------------
@@ -618,12 +635,12 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
     S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
     S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
-    S_noise_logarithmic = [0]
+    #S_noise_logarithmic = [0]
     # add zero to the list
     particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # [ 1.5, 2, 2.5, 3]#
     particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
     #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
-    particle_guidance_factor_logarithmic = [0, 1]
+    #particle_guidance_factor_logarithmic = [0, 1]
     num_seq_iter = range(num_seq)
 
     safe_digits = {}
