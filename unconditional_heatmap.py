@@ -549,7 +549,7 @@ def generate_images_and_save_heatmap(
     # batch_predicted_digits to list of integers
     batch_predicted_digits = [int(digit) for digit in batch_predicted_digits]
     image_steps_in_big_tensor = image_steps[-1]
-    if plotting or True:
+    if plotting:
         for i in range(1, len(image_steps)):
             image_steps_in_big_tensor = torch.cat((image_steps_in_big_tensor, image_steps[i]), dim=0)
         # trajectory of the diffusion for one generated image
@@ -635,12 +635,14 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
     S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
     S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
-    #S_noise_logarithmic = [0]
+    if local_computer:
+        S_noise_logarithmic = [0, 1]
     # add zero to the list
     particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # [ 1.5, 2, 2.5, 3]#
     particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
     #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
-    #particle_guidance_factor_logarithmic = [0, 1]
+    if local_computer:
+        particle_guidance_factor_logarithmic = [0, 1]
     num_seq_iter = range(num_seq)
 
     safe_digits = {}

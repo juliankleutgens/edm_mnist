@@ -28,14 +28,14 @@ class StackedRandomGenerator:
 
 
 def plot_2d(features_2d, labels, title, new_points=None):
-
+    num_labels = len(np.unique(labels))
     plt.figure(figsize=(10, 8))
     scatter = plt.scatter(features_2d[:, 0], features_2d[:, 1], c=labels, cmap='tab10', alpha=0.7)
 
     if new_points is not None:
         for i in range(new_points.shape[0]):
             plt.scatter(new_points[i, 0], new_points[i, 1], c='red', label=f'New Point {i + 1}', marker='x')
-    plt.colorbar(scatter, ticks=range(10))  # Assuming labels are integers in range(0, 9)
+    plt.colorbar(scatter, ticks=range(num_labels))  # Assuming labels are integers in range(0, 9)
     plt.title(title)
     plt.xlabel('Component 1')
     plt.ylabel('Component 2')
@@ -71,8 +71,8 @@ def get_the_features_and_the_2d_map(num_classes=10):
 
     # Extract features
     try:
-        features_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/features_noise2.npy')
-        labels_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/labels_noise2.npy')
+        features_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/features2.npy')
+        labels_np = np.load('/Users/juliankleutgens/PycharmProjects/edm-main/labels2.npy')
         print("Features and labels loaded from disk")
         get_new_features = False
     except FileNotFoundError:
