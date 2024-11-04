@@ -34,12 +34,24 @@ def plot_2d(features_2d, labels, title, new_points=None):
 
     if new_points is not None:
         for i in range(new_points.shape[0]):
-            plt.scatter(new_points[i, 0], new_points[i, 1], c='red', label=f'New Point {i + 1}', marker='x')
+            plt.scatter(
+                new_points[i, 0], new_points[i, 1],
+                c='red', label=f'New Point {i + 1}', marker='x', s=100, edgecolor='black'
+            )
+        # Calculate unique points and duplicate count
+        new_points_unique = np.unique(np.round(new_points, 2), axis=0)
+        num_of_same_points = new_points.shape[0] - new_points_unique.shape[0]
+
+        # Set subtitle with the count of duplicate points
+        plt.suptitle(f'Number of same points: {num_of_same_points}', fontsize=14)
+
+    # Main title
+    plt.title(title, fontsize=12)
     plt.colorbar(scatter, ticks=range(num_labels))  # Assuming labels are integers in range(0, 9)
-    plt.title(title)
     plt.xlabel('Component 1')
     plt.ylabel('Component 2')
     plt.show()
+
 
 def get_the_features_and_the_2d_map(num_classes=10):
     # Load your dataset
@@ -128,9 +140,13 @@ def add_new_unlabeled_images_into_2d_featuremap(images_to_add, labels_to_add=Non
     # Concatenate the new features to the existing ones
     features_combined = np.concatenate((features, new_features_np), axis=0)
 
-    # Use the same UMAP or t-SNE model to transform the new points
+    # Use the same UMAP model to transform the new points
     umap_reducer = umap.UMAP(n_components=2, random_state=42)
     features_2d_combined = umap_reducer.fit_transform(features_combined)
+
+    # t-SNE for comparison
+    #tsne = TSNE(n_components=2, perplexity=30, learning_rate=200, random_state=42)
+    #features_2d_combined_tsne = tsne.fit_transform(features_combined)
 
     # labels
     # add a new label for the new points
@@ -141,6 +157,7 @@ def add_new_unlabeled_images_into_2d_featuremap(images_to_add, labels_to_add=Non
     # Plot the original features and the new points
     new_points_2d = features_2d_combined[-new_features_np.shape[0]:]
     plot_2d(features_2d_combined, labels, title="UMAP Visualization with New Points", new_points=new_points_2d)
+#    plot_2d(features_2d_combined_tsne, labels, title="t-SNE Visualization with New Points", new_points=new_points_2d)
 
 
 

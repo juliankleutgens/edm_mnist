@@ -549,8 +549,9 @@ def generate_images_and_save_heatmap(
         print(f"Error: {e}")
     # batch_predicted_digits to list of integers
     batch_predicted_digits = [int(digit) for digit in batch_predicted_digits]
-    image_steps_in_big_tensor = image_steps[-1]
+
     if local_computer:
+        image_steps_in_big_tensor = image_steps[-1]
         for i in range(1, len(image_steps)):
             image_steps_in_big_tensor = torch.cat((image_steps_in_big_tensor, image_steps[i]), dim=0)
         # trajectory of the diffusion for one generated image
@@ -558,16 +559,14 @@ def generate_images_and_save_heatmap(
         for i in range(1, len(image_steps_in_big_tensor)):
             one_image_diffusion = torch.cat((one_image_diffusion, image_steps_in_big_tensor[i][0].unsqueeze(0).unsqueeze(0)), dim=0)
 
-        feature_pwd = os.path.join(os.getcwd(), 'features_noise.npy')
-        labels_pwd = os.path.join(os.getcwd(), 'labels_noise.npy')
-        add_new_unlabeled_images_into_2d_featuremap(images_to_add=generated_img_btw_0_1,
-                                                    feature_pwd=feature_pwd, labels_pwd=labels_pwd)
+        feature_pwd = os.path.join(os.getcwd(), 'features2.npy')
+        labels_pwd = os.path.join(os.getcwd(), 'labels2.npy')
+        add_new_unlabeled_images_into_2d_featuremap(images_to_add=generated_img_zero_background,feature_pwd=feature_pwd, labels_pwd=labels_pwd)
 
         # same with the trajectory of the diffusion
         feature_pwd = os.path.join(os.getcwd(), 'features_noise_anno.npy')
         labels_pwd = os.path.join(os.getcwd(), 'labels_noise_anno.npy')
-        add_new_unlabeled_images_into_2d_featuremap(images_to_add=generated_img_btw_0_1,
-                                                    feature_pwd=feature_pwd, labels_pwd=labels_pwd)
+        #add_new_unlabeled_images_into_2d_featuremap(images_to_add=generated_img_btw_0_1,feature_pwd=feature_pwd, labels_pwd=labels_pwd)
 
 
 
