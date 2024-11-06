@@ -620,7 +620,7 @@ def edm_sampler2(
             particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
 
     if plot_diffusion:
-        plot_the_gradient_norm(norm_of_gradient_pg, num_steps)
+        #plot_the_gradient_norm(norm_of_gradient_pg, num_steps)
 
         #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
         #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')

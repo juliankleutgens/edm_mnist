@@ -249,13 +249,13 @@ def edm_sampler(
     if plot_diffusion:
         path_saveing = None
         #plot_the_gradient_norm(pg_grad_norm, num_steps=num_steps, , title='Particle Guidance Gradient after PG')
-        plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title='Particle Guidance Gradient after PG')
-        plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
-        plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
+        #plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title='Particle Guidance Gradient after PG')
+        #plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
+        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
         plot_diffusion_process_conditional(intermediate_images, images=image, save_path=path_saveing)
-        plot_diffusion_process(intermediate_direction_cur, variable_name='ODE Direction', save_path=path_saveing)
-        plot_diffusion_process(intermediate_denoised_prime, variable_name='Second Order Correction', save_path=path_saveing)
-        plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad', save_path=path_saveing)
+        #plot_diffusion_process(intermediate_direction_cur, variable_name='ODE Direction', save_path=path_saveing)
+        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Second Order Correction', save_path=path_saveing)
+        #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad', save_path=path_saveing)
     #plot_gamma(gamma_arr, S_churn)
     return x_next, intermediate_images_output
 
