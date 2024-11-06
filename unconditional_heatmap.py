@@ -98,7 +98,7 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
 
     # Plot the heatmap
     plt.figure(figsize=(8, 6))
-    plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
+    plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=10)
 
 
     # Set x and y axis labels with corresponding values
@@ -658,8 +658,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                     sigma_min=sigma_min, sigma_max=sigma_max, S_churn=s_churn, rho=rho, local_computer=local_computer, device=device,
                     particle_guidance_factor=particle_guidance_factor, digit_filter=digit_filter, s_noise=s_noise,
                     gamma_scheduler=gamma_scheduler, alpha_scheduler=alpha_scheduler, particle_guidance_distance=particle_guidance_distance, iteration=i,
-                    path_classifier=path_classifier, separate_grad_and_PG=separate_grad_and_pg, generate_batch_sequentially=generate_batch_sequentially,
-                )
+                    path_classifier=path_classifier, separate_grad_and_PG=separate_grad_and_pg, generate_batch_sequentially=generate_batch_sequentially,)
 
                 if pg_heatmap:
                     key = f"S_churn: {s_churn:.2f}, Particle Guidance: {particle_guidance_factor:.2f}"

@@ -55,6 +55,20 @@ def plot_gamma(gamma_arr, S_churn):
     plt.title(f'Gamma values with S_churn {S_churn}')
     plt.show()
     plt.close()
+
+
+def plot_the_gradient_norm(norm_of_gradient_pg, num_steps=18, title='Gradient of the Particle Guidance'):
+    plt.close()
+    # plot the norm of the gradient of the particle guidance
+    # all 22 entries are a new plot line
+    lines = [norm_of_gradient_pg[i:i + num_steps] for i in range(0, len(norm_of_gradient_pg), num_steps)]
+    for i, line in enumerate(lines):
+        plt.plot(line, label=f'Line {i + 1}')
+    plt.legend()
+    plt.xlabel("Entry Number")
+    plt.ylabel("Value")
+    plt.title("Norm of the" + title)
+    plt.show()
 #----------------------------------------------------------------------------
 # Proposed EDM sampler (Algorithm 2).
 def compute_distance_matrix(xs, distance='l2'):
@@ -101,17 +115,17 @@ def compute_particle_guidance_grad(xs, gamma=1, alpha=1, distance='l2'):
         rbf_sum = (-distance_list * gamma / h_t).exp().sum()
         rbf_sum = rbf_sum * alpha
         rbf_sum.backward()
-        """
+
         xs_grad = torch.zeros_like(xs)
         # do gradient by hand
         counter = 0
         for i in range(n):
             for j in range(n):
                 if i != j:
-                    xs_grad[i] += -gamma * (xs[i] - xs[j]) * (-distance_matrix[i, j] * gamma / h_t).exp() / h_t
+                    xs_grad[i] += 0.5 * -gamma * (xs[i] - xs[j]) * (-distance_matrix[i, j] * gamma / h_t).exp() / h_t
                     counter += 1
         xs_grad_torch = xs.grad
-        """
+
         return xs.grad
 
 def edm_sampler(
@@ -154,14 +168,17 @@ def edm_sampler(
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0] * 0.1
     gamma_arr = []
-
+    S_churn_ = S_churn
     # make dooble the loop if separate_grad_and_PG is True such that PG and the gradient are added in different steps
     extra_loop = 2 if separate_grad_and_PG else 1
+    pg_grad_norm = []
+    particle_guidance_grad_norm = []
+    d_ODE_norm = []
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         for j in range(extra_loop):
 
             x_cur = x_next
-
+            S_churn = S_churn_ if j == 0 else 0
             # Increase noise temporarily.
             gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= t_cur <= S_max else 0
             gamma_arr.append(gamma)
@@ -179,7 +196,9 @@ def edm_sampler(
             denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             #d_cur = (x_hat - denoised) / t_hat
             pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
+            pg_grad_norm.extend([torch.norm(pg_grad[i]) for i in range(pg_grad.shape[0])])
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
+            particle_guidance_grad_norm.extend([torch.norm(particle_guidance_grad[i]) for i in range(particle_guidance_grad.shape[0])])
             if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any() or (separate_grad_and_PG and j == 0):
                 #print('Nan or Inf in pg_grad')
                 d_cur = (x_hat - denoised) / t_hat
@@ -187,9 +206,10 @@ def edm_sampler(
                 d_cur = - particle_guidance_grad
             else:
                 d_cur = (x_hat - denoised) / t_hat - particle_guidance_grad
-
             x_next = x_hat + (t_next - t_hat) * d_cur
 
+            d_ODE =  (x_hat - denoised) / t_hat
+            d_ODE_norm.extend([torch.norm(d_ODE[i]) for i in range(d_ODE.shape[0])])
             # Apply 2nd order correction.
             if i < num_steps - 1:
                 if net.num_cond_frames > 0:
@@ -212,28 +232,36 @@ def edm_sampler(
             denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
 
+
             direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
 
-#            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-#            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
+            try:
+                prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+                intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
+            except:
+                pass
 
             particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
             particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
 
 
     if plot_diffusion:
-        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
-        #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
-        plot_diffusion_process_conditional(intermediate_images, images=image)
-        #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
-        #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
+        path_saveing = None
+        #plot_the_gradient_norm(pg_grad_norm, num_steps=num_steps, , title='Particle Guidance Gradient after PG')
+        plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title='Particle Guidance Gradient after PG')
+        plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
+        plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
+        plot_diffusion_process_conditional(intermediate_images, images=image, save_path=path_saveing)
+        plot_diffusion_process(intermediate_direction_cur, variable_name='ODE Direction', save_path=path_saveing)
+        plot_diffusion_process(intermediate_denoised_prime, variable_name='Second Order Correction', save_path=path_saveing)
+        plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad', save_path=path_saveing)
     #plot_gamma(gamma_arr, S_churn)
     return x_next, intermediate_images_output
 
 
 # Function to plot the intermediate images
-def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, variable_name='Image'):
+def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, variable_name='Image', save_path=None):
     if num_rows * num_cols < len(intermediate_images):
         num_rows = (len(intermediate_images) + num_cols - 1) // num_cols
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 6))
@@ -242,9 +270,14 @@ def plot_diffusion_process(intermediate_images, num_rows=2, num_cols=5, variable
             ax.imshow(intermediate_images[i], cmap='gray')
             ax.set_title(f'Step {i + 1}')
         ax.axis('off')
-    title = 'Diffusion process: ' + variable_name
+    title = 'Denoising process: ' + variable_name
     plt.suptitle(title)
-    plt.show()
+    # save images to disk
+    if save_path is not None:
+        save_path = save_path + f'_{variable_name}.png'
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
+    else:
+        plt.show()
 
 def plot_diffusion_process_conditional(intermediate_images, num_rows=2, num_cols=5,images=None, save_path=None):
     if images is not None:
@@ -264,126 +297,15 @@ def plot_diffusion_process_conditional(intermediate_images, num_rows=2, num_cols
             ax.imshow(intermediate_images[i-num_frames], cmap='gray')
             ax.set_title(f'Step {i- num_frames+ 1}')
         ax.axis('off')
+    plt.suptitle('Denoising process: Conditional + Images steps') if num_frames > 0 else plt.suptitle(
+        'Denoising process: Images steps')
     if save_path is not None:
+        save_path = save_path + '_images_cond.png'
         plt.savefig(save_path, bbox_inches='tight', pad_inches=0)
     else:
         plt.show()
     plt.close()
-#----------------------------------------------------------------------------
-# Generalized ablation sampler, representing the superset of all sampling
-# methods discussed in the paper.
 
-def ablation_sampler(
-    net, latents, class_labels=None, randn_like=torch.randn_like,
-    num_steps=18, sigma_min=None, sigma_max=None, rho=7,
-    solver='heun', discretization='edm', schedule='linear', scaling='none',
-    epsilon_s=1e-3, C_1=0.001, C_2=0.008, M=1000, alpha=1,
-    S_churn=0, S_min=0, S_max=float('inf'), S_noise=1, local_computer=False
-):
-    assert solver in ['euler', 'heun']
-    assert discretization in ['vp', 've', 'iddpm', 'edm']
-    assert schedule in ['vp', 've', 'linear']
-    assert scaling in ['vp', 'none']
-
-    # Helper functions for VP & VE noise level schedules.
-    vp_sigma = lambda beta_d, beta_min: lambda t: (np.e ** (0.5 * beta_d * (t ** 2) + beta_min * t) - 1) ** 0.5
-    vp_sigma_deriv = lambda beta_d, beta_min: lambda t: 0.5 * (beta_min + beta_d * t) * (sigma(t) + 1 / sigma(t))
-    vp_sigma_inv = lambda beta_d, beta_min: lambda sigma: ((beta_min ** 2 + 2 * beta_d * (sigma ** 2 + 1).log()).sqrt() - beta_min) / beta_d
-    ve_sigma = lambda t: t.sqrt()
-    ve_sigma_deriv = lambda t: 0.5 / t.sqrt()
-    ve_sigma_inv = lambda sigma: sigma ** 2
-
-    # Select default noise level range based on the specified time step discretization.
-    if sigma_min is None:
-        vp_def = vp_sigma(beta_d=19.9, beta_min=0.1)(t=epsilon_s)
-        sigma_min = {'vp': vp_def, 've': 0.02, 'iddpm': 0.002, 'edm': 0.002}[discretization]
-    if sigma_max is None:
-        vp_def = vp_sigma(beta_d=19.9, beta_min=0.1)(t=1)
-        sigma_max = {'vp': vp_def, 've': 100, 'iddpm': 81, 'edm': 80}[discretization]
-
-    # Adjust noise levels based on what's supported by the network.
-    sigma_min = max(sigma_min, net.sigma_min)
-    sigma_max = min(sigma_max, net.sigma_max)
-
-    # Compute corresponding betas for VP.
-    vp_beta_d = 2 * (np.log(sigma_min ** 2 + 1) / epsilon_s - np.log(sigma_max ** 2 + 1)) / (epsilon_s - 1)
-    vp_beta_min = np.log(sigma_max ** 2 + 1) - 0.5 * vp_beta_d
-
-    # Define time steps in terms of noise level.
-    step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
-    if discretization == 'vp':
-        orig_t_steps = 1 + step_indices / (num_steps - 1) * (epsilon_s - 1)
-        sigma_steps = vp_sigma(vp_beta_d, vp_beta_min)(orig_t_steps)
-    elif discretization == 've':
-        orig_t_steps = (sigma_max ** 2) * ((sigma_min ** 2 / sigma_max ** 2) ** (step_indices / (num_steps - 1)))
-        sigma_steps = ve_sigma(orig_t_steps)
-    elif discretization == 'iddpm':
-        u = torch.zeros(M + 1, dtype=torch.float64, device=latents.device)
-        alpha_bar = lambda j: (0.5 * np.pi * j / M / (C_2 + 1)).sin() ** 2
-        for j in torch.arange(M, 0, -1, device=latents.device): # M, ..., 1
-            u[j - 1] = ((u[j] ** 2 + 1) / (alpha_bar(j - 1) / alpha_bar(j)).clip(min=C_1) - 1).sqrt()
-        u_filtered = u[torch.logical_and(u >= sigma_min, u <= sigma_max)]
-        sigma_steps = u_filtered[((len(u_filtered) - 1) / (num_steps - 1) * step_indices).round().to(torch.int64)]
-    else:
-        assert discretization == 'edm'
-        sigma_steps = (sigma_max ** (1 / rho) + step_indices / (num_steps - 1) * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
-
-    # Define noise level schedule.
-    if schedule == 'vp':
-        sigma = vp_sigma(vp_beta_d, vp_beta_min)
-        sigma_deriv = vp_sigma_deriv(vp_beta_d, vp_beta_min)
-        sigma_inv = vp_sigma_inv(vp_beta_d, vp_beta_min)
-    elif schedule == 've':
-        sigma = ve_sigma
-        sigma_deriv = ve_sigma_deriv
-        sigma_inv = ve_sigma_inv
-    else:
-        assert schedule == 'linear'
-        sigma = lambda t: t
-        sigma_deriv = lambda t: 1
-        sigma_inv = lambda sigma: sigma
-
-    # Define scaling schedule.
-    if scaling == 'vp':
-        s = lambda t: 1 / (1 + sigma(t) ** 2).sqrt()
-        s_deriv = lambda t: -sigma(t) * sigma_deriv(t) * (s(t) ** 3)
-    else:
-        assert scaling == 'none'
-        s = lambda t: 1
-        s_deriv = lambda t: 0
-
-    # Compute final time steps based on the corresponding noise levels.
-    t_steps = sigma_inv(net.round_sigma(sigma_steps))
-    t_steps = torch.cat([t_steps, torch.zeros_like(t_steps[:1])]) # t_N = 0
-
-    # Main sampling loop.
-    t_next = t_steps[0]
-    x_next = latents.to(torch.float64) * (sigma(t_next) * s(t_next))
-    for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
-        x_cur = x_next
-
-        # Increase noise temporarily.
-        gamma = min(S_churn / num_steps, np.sqrt(2) - 1) if S_min <= sigma(t_cur) <= S_max else 0
-        t_hat = sigma_inv(net.round_sigma(sigma(t_cur) + gamma * sigma(t_cur)))
-        x_hat = s(t_hat) / s(t_cur) * x_cur + (sigma(t_hat) ** 2 - sigma(t_cur) ** 2).clip(min=0).sqrt() * s(t_hat) * S_noise * randn_like(x_cur)
-
-        # Euler step.
-        h = t_next - t_hat
-        denoised = net(x_hat / s(t_hat), sigma(t_hat), class_labels).to(torch.float64)
-        d_cur = (sigma_deriv(t_hat) / sigma(t_hat) + s_deriv(t_hat) / s(t_hat)) * x_hat - sigma_deriv(t_hat) * s(t_hat) / sigma(t_hat) * denoised
-        x_prime = x_hat + alpha * h * d_cur
-        t_prime = t_hat + alpha * h
-
-        # Apply 2nd order correction.
-        if solver == 'euler' or i == num_steps - 1:
-            x_next = x_hat + h * d_cur
-        else:
-            assert solver == 'heun'
-            denoised = net(x_prime / s(t_prime), sigma(t_prime), class_labels).to(torch.float64)
-            d_prime = (sigma_deriv(t_prime) / sigma(t_prime) + s_deriv(t_prime) / s(t_prime)) * x_prime - sigma_deriv(t_prime) * s(t_prime) / sigma(t_prime) * denoised
-            x_next = x_hat + h * ((1 - 1 / (2 * alpha)) * d_cur + 1 / (2 * alpha) * d_prime)
-
-    return x_next
 
 #----------------------------------------------------------------------------
 # Wrapper for torch.Generator that allows specifying a different random seed
@@ -602,7 +524,7 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
         # Generate images.
         sampler_kwargs = {key: value for key, value in sampler_kwargs.items() if value is not None}
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
-        sampler_fn = ablation_sampler if have_ablation_kwargs else edm_sampler
+        sampler_fn = edm_sampler
         if i == 1:
             plot_diffusion = False
         images, intermediate_images = sampler_fn(net, latents, class_labels,image=image,

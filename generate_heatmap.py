@@ -19,7 +19,7 @@ from scipy.stats import binom
 import time
 from collections import Counter
 import wandb
-from generate_conditional_frames import edm_sampler, cosine_annealing, plot_diffusion_process_conditional
+from generate_conditional_frames import edm_sampler, cosine_annealing, plot_diffusion_process_conditional, plot_the_gradient_norm
 import math
 
 # ----------------------------- utility functions -----------------------------
@@ -95,8 +95,10 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
 
     # Plot the heatmap
     plt.figure(figsize=(8, 6))
-    if mode == 'quality' and np.nanmax(heatmap_data) < 15:
-        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=15)
+    if mode == 'quality' and np.nanmax(heatmap_data) < 20:
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=20)
+    elif mode == 'directions' and np.nanmax(heatmap_data) < 8:
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=8)
     else:
         plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
 
@@ -465,7 +467,7 @@ def compute_particle_guidance_grad_set(x, gamma=1, alpha=1, distance='l2', set_r
 
         # Only consider upper triangular distance matrix, rest are duplicate entries or distance to self
         triu_indices = torch.triu_indices(n, n, offset=1) # triu_indices = torch.Size([2, 28]) = (n^2 - n) / 2
-        distance_list = distance_matrix[triu_indices[0], triu_indices[1]]
+        distance_list = distance_matrix[triu_indices[0], triu_indices[1]] #  L2 distence
 
         # Normalizing factor
         h_t = distance_list.median() ** 2 / math.log(n)
@@ -474,6 +476,10 @@ def compute_particle_guidance_grad_set(x, gamma=1, alpha=1, distance='l2', set_r
         rbf_sum = (-distance_list * gamma / h_t).exp().sum()
         rbf_sum = rbf_sum * alpha
         rbf_sum.backward()
+
+        xs_grad_torch = xs.grad
+        return xs_grad_torch
+
         """
         xs_grad = torch.zeros_like(xs)
         # do gradient by hand
@@ -481,12 +487,25 @@ def compute_particle_guidance_grad_set(x, gamma=1, alpha=1, distance='l2', set_r
         for i in range(n):
             for j in range(n):
                 if i != j:
-                    xs_grad[i] += -gamma * (xs[i] - xs[j]) * (-distance_matrix[i, j] * gamma / h_t).exp() / h_t
+                    rbf_weight = (-distance_matrix[i, j] * gamma / h_t).exp()
+                    grad_contribution = - 2 * gamma * (xs[i] - xs[j]) * rbf_weight / h_t
+                    xs_grad[i] += grad_contribution
                     counter += 1
         xs_grad_torch = xs.grad
-        """
-        return xs.grad
+        # check if the two ways to calculate the gradient are the same
+        if not torch.allclose(xs_grad_torch, xs_grad, atol=1e-2):
+            # print how many entries are not the same
+            print(f"The two ways to calculate the gradient are not the same. {torch.sum(xs_grad_torch[0, 0, :, :]  - xs_grad[-1, 0, :, :] > 1e-4)}")
 
+        plt.close() 
+        plt.imshow(xs_grad_torch[0, 0, :, :], cmap='gray')
+        plt.show()
+        
+        plt.close() 
+        plt.imshow(xs[-1, 0, :, :].detach().numpy(), cmap='gray')
+        plt.show()
+        return xs_grad_torch
+        """
 
 def edm_sampler2(
     net, latents, class_labels=None, randn_like=torch.randn_like,
@@ -522,7 +541,7 @@ def edm_sampler2(
     intermediate_denoised_prime = []
     intermediate_direction_cur = []
     particle_guidance_grad_images = []
-
+    norm_of_gradient_pg = []
 
     # Main sampling loop.
     gamma_arr = []
@@ -530,6 +549,7 @@ def edm_sampler2(
     # make dooble the loop if separate_grad_and_PG is True such that PG and the gradient are added in different steps
     batchsize = latents.shape[0]
     for j in range(batchsize):
+        intermediate_images = []
         x_next = latents[j].to(torch.float64).unsqueeze(0) * t_steps[0] * 0.1
         for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
             x_cur = x_next
@@ -552,7 +572,10 @@ def edm_sampler2(
             if not j == 0:
                 pg_grad = compute_particle_guidance_grad_set(denoised, gamma=gamma_schedule[i], alpha=alpha_schedule[i],
                                                              distance=particle_guidance_distance, set_reference=set_of_generated_images)
-                pg_grad = pg_grad[0:1]
+                # norm of the gradient in comparison to the image
+                norm_denoised = torch.norm(denoised, p=2)
+                pg_grad = pg_grad[0].unsqueeze(0)
+                norm_of_gradient_pg.append(torch.norm(pg_grad, p=2))
             else:
                 pg_grad = torch.zeros_like(denoised)
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
@@ -573,29 +596,32 @@ def edm_sampler2(
                 denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
                 d_prime = (x_next - denoised) / t_next
                 x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+            if plot_diffusion:
+                intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3,
+                                                                                                     1).cpu().numpy()
+                intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+
         set_of_generated_images = torch.cat((set_of_generated_images, x_next), dim=0)  if 'set_of_generated_images' in locals() else x_next
 
         # Save intermediate images.
         # Convert x_next to an image and store it
-    if plot_diffusion:
-        intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-        intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
+        if False:
+            denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
 
-        denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-        intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
+            direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
 
-        direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-        intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
+            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
 
-        prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-        intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
-
-        particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2,
-                                                                                                                   3,
-                                                                                                                   1).cpu().numpy()
-        particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
+            particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2,
+                                                                                                                       3,                                                                                                1).cpu().numpy()
+            particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
 
     if plot_diffusion:
+        plot_the_gradient_norm(norm_of_gradient_pg, num_steps)
+
         #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
         #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
         plot_diffusion_process_conditional(intermediate_images, images=image)
@@ -696,7 +722,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         # Generate the image with S_churn=0.9
         generated_img, _ = sampler(
                 net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-                rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise,
+                rho=rho, S_churn=S_churn, image=image, plot_diffusion=True, S_noise=s_noise,
                 particle_guidance_factor=particle_guidance_factor,
                 gamma_scheduler=gamma_scheduler, particle_guidance_distance=particle_guidance_distance,
                 alpha_scheduler=alpha_scheduler,
