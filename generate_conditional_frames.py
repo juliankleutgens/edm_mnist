@@ -57,15 +57,18 @@ def plot_gamma(gamma_arr, S_churn):
     plt.close()
 
 
-def plot_the_gradient_norm(norm_of_gradient_pg, num_steps=18, title='Gradient of the Particle Guidance'):
+def plot_the_gradient_norm(norm_of_gradient_pg, num_steps=18, title=' the Particle Guidance Gradient'):
     plt.close()
     # plot the norm of the gradient of the particle guidance
     # all 22 entries are a new plot line
-    lines = [norm_of_gradient_pg[i:i + num_steps] for i in range(0, len(norm_of_gradient_pg), num_steps)]
+    num_of_lines = len(norm_of_gradient_pg) // num_steps
+    lines = []
+    for i in range(num_of_lines):
+        lines.append(norm_of_gradient_pg[i::num_of_lines])
     for i, line in enumerate(lines):
         plt.plot(line, label=f'Line {i + 1}')
     plt.legend()
-    plt.xlabel("Entry Number")
+    plt.xlabel("Number of Steps")
     plt.ylabel("Value")
     plt.title("Norm of the" + title)
     plt.show()
@@ -196,9 +199,9 @@ def edm_sampler(
             denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             #d_cur = (x_hat - denoised) / t_hat
             pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
-            pg_grad_norm.extend([torch.norm(pg_grad[i]) for i in range(pg_grad.shape[0])])
+            pg_grad_norm.extend([torch.norm(pg_grad[ii]) for ii in range(pg_grad.shape[0])])
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
-            particle_guidance_grad_norm.extend([torch.norm(particle_guidance_grad[i]) for i in range(particle_guidance_grad.shape[0])])
+            particle_guidance_grad_norm.extend([torch.norm(particle_guidance_grad[ii]) for ii in range(particle_guidance_grad.shape[0])])
             if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any() or (separate_grad_and_PG and j == 0):
                 #print('Nan or Inf in pg_grad')
                 d_cur = (x_hat - denoised) / t_hat
@@ -209,7 +212,7 @@ def edm_sampler(
             x_next = x_hat + (t_next - t_hat) * d_cur
 
             d_ODE =  (x_hat - denoised) / t_hat
-            d_ODE_norm.extend([torch.norm(d_ODE[i]) for i in range(d_ODE.shape[0])])
+            d_ODE_norm.extend([torch.norm(d_ODE[ii]) for ii in range(d_ODE.shape[0])])
             # Apply 2nd order correction.
             if i < num_steps - 1:
                 if net.num_cond_frames > 0:
@@ -247,12 +250,13 @@ def edm_sampler(
 
 
     if plot_diffusion:
-        path_saveing = None
-        #plot_the_gradient_norm(pg_grad_norm, num_steps=num_steps, , title='Particle Guidance Gradient after PG')
-        #plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title='Particle Guidance Gradient after PG')
-        #plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
-        #plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
-        plot_diffusion_process_conditional(intermediate_images, images=image, save_path=path_saveing)
+        if local_computer:
+            path_saveing = '/Users/juliankleutgens/PycharmProjects/edm-main/out/pg_'
+            plot_the_gradient_norm(pg_grad_norm, num_steps=num_steps, title=' Particle Guidance Gradient')
+            plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title=' Particle Guidance Gradient after sacling  PG')
+            #plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
+        plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
+        #plot_diffusion_process_conditional(intermediate_images, images=image, save_path=path_saveing)
         #plot_diffusion_process(intermediate_direction_cur, variable_name='ODE Direction', save_path=path_saveing)
         #plot_diffusion_process(intermediate_denoised_prime, variable_name='Second Order Correction', save_path=path_saveing)
         #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad', save_path=path_saveing)
@@ -526,7 +530,7 @@ def main(network_pkl, outdir, wandb_run_id, subdirs, seeds, class_idx, max_batch
         have_ablation_kwargs = any(x in sampler_kwargs for x in ['solver', 'discretization', 'schedule', 'scaling'])
         sampler_fn = edm_sampler
         if i == 1:
-            plot_diffusion = False
+            plot_diffusion = True
         images, intermediate_images = sampler_fn(net, latents, class_labels,image=image,
                                                  randn_like=rnd.randn_like,plot_diffusion=plot_diffusion, **sampler_kwargs)
 

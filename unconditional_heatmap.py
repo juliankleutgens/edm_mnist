@@ -98,7 +98,10 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
 
     # Plot the heatmap
     plt.figure(figsize=(8, 6))
-    plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=10)
+    if np.max(heatmap_data) < 7:
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=7)
+    else:
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
 
 
     # Set x and y axis labels with corresponding values
@@ -550,7 +553,7 @@ def generate_images_and_save_heatmap(
     # batch_predicted_digits to list of integers
     batch_predicted_digits = [int(digit) for digit in batch_predicted_digits]
 
-    if local_computer:
+    if local_computer and False:
         image_steps_in_big_tensor = image_steps[-1]
         for i in range(1, len(image_steps)):
             image_steps_in_big_tensor = torch.cat((image_steps_in_big_tensor, image_steps[i]), dim=0)

@@ -19,7 +19,7 @@ from scipy.stats import binom
 import time
 from collections import Counter
 import wandb
-from generate_conditional_frames import edm_sampler, cosine_annealing, plot_diffusion_process_conditional, plot_the_gradient_norm
+from generate_conditional_frames import edm_sampler, cosine_annealing, plot_diffusion_process_conditional, plot_the_gradient_norm, plot_diffusion_process
 import math
 
 # ----------------------------- utility functions -----------------------------
@@ -98,7 +98,7 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
     if mode == 'quality' and np.nanmax(heatmap_data) < 20:
         plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=20)
     elif mode == 'directions' and np.nanmax(heatmap_data) < 8:
-        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=0, vmax=8)
+        plt.imshow(heatmap_data, cmap='viridis', aspect='auto', vmin=3, vmax=7)
     else:
         plt.imshow(heatmap_data, cmap='viridis', aspect='auto')
 
@@ -245,6 +245,27 @@ def get_true_probability(true_probability, network_pkl, mode, num_of_directions)
         except AttributeError:
             p_true = 0.5
     return p_true
+
+def plot_the_batch_of_generated_images(generated_images, local_computer = False, config_in_title = ""):
+    num_of_images = len(generated_images)
+    fig, ax = plt.subplots(1, num_of_images, figsize=(num_of_images, 2))
+    plt.suptitle(f"Generated Images {config_in_title}")
+    for i in range(num_of_images):
+        ax[i].imshow(generated_images[i,0,:,:], cmap='gray')
+        ax[i].axis('off')
+    # save the image in out folder with a time stamp
+    t = time.localtime()
+    path = os.path.join(os.getcwd(), 'out', f"generated_images_{t.tm_hour}_{t.tm_min}_{t.tm_sec}_{random.randint(0, 1000)}.png")
+    plt.savefig(path)
+    # save it to wandb
+    import wandb
+    wandb.log({"generated_images": wandb.Image(path)})
+    if local_computer:
+        jjj = 0
+        plt.show()
+    plt.close()
+
+
 def calculate_centroids(image):
     # Convert the image tensor to NumPy array (if necessary)
     image_np = image.cpu().numpy() if hasattr(image, 'numpy') else image.cpu()
@@ -545,11 +566,11 @@ def edm_sampler2(
 
     # Main sampling loop.
     gamma_arr = []
-
+    intermediate_images = []
     # make dooble the loop if separate_grad_and_PG is True such that PG and the gradient are added in different steps
     batchsize = latents.shape[0]
     for j in range(batchsize):
-        intermediate_images = []
+
         x_next = latents[j].to(torch.float64).unsqueeze(0) * t_steps[0] * 0.1
         for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
             x_cur = x_next
@@ -578,6 +599,9 @@ def edm_sampler2(
                 norm_of_gradient_pg.append(torch.norm(pg_grad, p=2))
             else:
                 pg_grad = torch.zeros_like(denoised)
+            if j == 1:
+                denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
+                intermediate_denoised.append(denoised_image[0])
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
             if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any():
                 #print('Nan or Inf in pg_grad')
@@ -596,35 +620,30 @@ def edm_sampler2(
                 denoised = net(x_input, t_next, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
                 d_prime = (x_next - denoised) / t_next
                 x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
-            if plot_diffusion:
+
+
+            if j == 1:
                 intermediate_image = (x_next * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3,
-                                                                                                     1).cpu().numpy()
+                                                                                                 1).cpu().numpy()
                 intermediate_images.append(intermediate_image[0])  # Save the first image for plotting
 
         set_of_generated_images = torch.cat((set_of_generated_images, x_next), dim=0)  if 'set_of_generated_images' in locals() else x_next
 
         # Save intermediate images.
         # Convert x_next to an image and store it
-        if False:
-            denoised_image = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-            intermediate_denoised.append(denoised_image[0])  # Save the first image for plotting
-
-            direction_cur_image = (d_cur * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-            intermediate_direction_cur.append(direction_cur_image[0])  # Save the first image for plotting
-
-            prime_image = (d_prime * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
-            intermediate_denoised_prime.append(prime_image[0])  # Save the first image for plotting
-
-            particle_guidance_grad_image = (particle_guidance_grad * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2,
-                                                                                                                       3,                                                                                                1).cpu().numpy()
-            particle_guidance_grad_images.append(particle_guidance_grad_image[0])  # Save the first image for plotting
 
     if plot_diffusion:
+        try:
+            plot_the_batch_of_generated_images(generated_images=set_of_generated_images.cpu(),
+                                               local_computer=(local_computer))
+        except Exception as e:
+            print(f"Error: {e}")
+
         #plot_the_gradient_norm(norm_of_gradient_pg, num_steps)
 
         #plot_diffusion_process(intermediate_denoised, variable_name='Denoised')
         #plot_diffusion_process(intermediate_direction_cur, variable_name='Direction Cur')
-        plot_diffusion_process_conditional(intermediate_images, images=image)
+        #plot_diffusion_process_conditional(intermediate_images, images=image)
         #plot_diffusion_process(intermediate_denoised_prime, variable_name='Denoised Prime')
         #plot_diffusion_process(particle_guidance_grad_images, variable_name='Particle Guidance Grad')
     #plot_gamma(gamma_arr, S_churn)
@@ -723,7 +742,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         generated_img, _ = sampler(
                 net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
                 rho=rho, S_churn=S_churn, image=image, plot_diffusion=True, S_noise=s_noise,
-                particle_guidance_factor=particle_guidance_factor,
+                particle_guidance_factor=particle_guidance_factor, local_computer=local_computer,
                 gamma_scheduler=gamma_scheduler, particle_guidance_distance=particle_guidance_distance,
                 alpha_scheduler=alpha_scheduler,
                 separate_grad_and_PG=separate_grad_and_PG
