@@ -111,6 +111,7 @@ def plot_heatmap_for_different_PG(S_noise_logarithmic, particle_guidance_factor_
 
     # For S_noise_logarithmic (x-axis)
     xticks_labels = [f'{sn:.2f}' if set(str(sn)) <= {'0', '1', '.'} else '' for sn in S_noise_logarithmic]
+    xticks_labels = [f'{sn:.2f}' for sn in S_noise_logarithmic] if not torch.cuda.is_available() else xticks_labels
     xticks_indices = np.arange(len(S_noise_logarithmic))
 
     # Apply the ticks in the plot
@@ -640,13 +641,13 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
     S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
     S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
     if local_computer:
-        S_noise_logarithmic = [0, 1]
+        S_noise_logarithmic = [0, 0.7]
     # add zero to the list
     particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1]  # [ 1.5, 2, 2.5, 3]#
     particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
     #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
     if local_computer:
-        particle_guidance_factor_logarithmic = [0, 1]
+        particle_guidance_factor_logarithmic = [1]
     num_seq_iter = range(num_seq)
 
     safe_digits = {}

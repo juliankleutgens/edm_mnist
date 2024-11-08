@@ -177,6 +177,8 @@ def edm_sampler(
     pg_grad_norm = []
     particle_guidance_grad_norm = []
     d_ODE_norm = []
+    pg_grad_iou_norm = []
+    pg_grad_l2_norm = []
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])): # 0, ..., N-1
         for j in range(extra_loop):
 
@@ -199,7 +201,15 @@ def edm_sampler(
             denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             #d_cur = (x_hat - denoised) / t_hat
             pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
-            pg_grad_norm.extend([torch.norm(pg_grad[ii]) for ii in range(pg_grad.shape[0])])
+            pg_grad_l2 = compute_particle_guidance_grad(denoised, gamma=gamma_schedule[i], alpha=alpha_schedule[i],distance='l2')
+            pg_grad_iou = compute_particle_guidance_grad(denoised, gamma=gamma_schedule[i], alpha=alpha_schedule[i],distance='iou')
+            pg_grad_iou_norm.extend([torch.norm(pg_grad_iou[ii]) for ii in range(pg_grad_iou.shape[0])])
+            pg_grad_l2_norm.extend([torch.norm(pg_grad_l2[ii]) for ii in range(pg_grad_l2.shape[0])])
+
+           # pg_grad_normlized = pg_grad
+           # for ii in range(pg_grad.shape[0]):
+           #     pg_grad_normlized[ii] = pg_grad[ii] / torch.norm(pg_grad[ii])
+
             particle_guidance_grad = particle_guidance_factor * t_cur * pg_grad
             particle_guidance_grad_norm.extend([torch.norm(particle_guidance_grad[ii]) for ii in range(particle_guidance_grad.shape[0])])
             if torch.isnan(pg_grad).any() or torch.isinf(pg_grad).any() or (separate_grad_and_PG and j == 0):
@@ -250,9 +260,12 @@ def edm_sampler(
 
 
     if plot_diffusion:
+        path_saveing = None
         if local_computer:
             path_saveing = '/Users/juliankleutgens/PycharmProjects/edm-main/out/pg_'
             plot_the_gradient_norm(pg_grad_norm, num_steps=num_steps, title=' Particle Guidance Gradient')
+            plot_the_gradient_norm(pg_grad_iou_norm, num_steps=num_steps, title=' Particle Guidance Gradient IoU')
+            plot_the_gradient_norm(pg_grad_l2_norm, num_steps=num_steps, title=' Particle Guidance Gradient L2')
             plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title=' Particle Guidance Gradient after sacling  PG')
             #plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
         plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
