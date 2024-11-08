@@ -50,15 +50,15 @@ def plot_images_with_centroids(image, centroids, local_computer=False):
 
     for i in range(num_of_images):
         ax[i].imshow(image[i, 0, :, :], cmap='gray')
-        ax[i].scatter(centroids[i][0], centroids[i][1], color='red', marker='x')  # Plot centroids
+        #ax[i].scatter(centroids[i][0], centroids[i][1], color='red', marker='x')  # Plot centroids
         # add an arrow to show the direction of the centroid
         if i < num_of_images - 1:
             dx = centroids[i + 1][0] - centroids[i][0]
             dy = centroids[i + 1][1] - centroids[i][1]
             # norm of vector (dx, dy) should be 3
             norm = np.sqrt(dx ** 2 + dy ** 2)
-            dx /= norm
-            dy /= norm
+            dx /= norm if norm != 0 else 1
+            dy /= norm if norm != 0 else 1
             dx *= 3
             dy *= 3
             ax[i].arrow(centroids[i][0], centroids[i][1], dx, dy, head_width=1, head_length=1, fc='blue', ec='blue')
@@ -347,7 +347,7 @@ def plot_images(image):
     #plt.show()
     plt.close()
 
-def polt_images_highlight_direction_change(image, direction_change):
+def polt_images_highlight_direction_change(image, direction_change, save_path=None):
     from matplotlib.patches import Rectangle
     num_of_images = image.shape[1]
     fig, ax = plt.subplots(1, num_of_images, figsize=(num_of_images, 2))
@@ -359,7 +359,9 @@ def polt_images_highlight_direction_change(image, direction_change):
             ax[i].add_patch(rect)
             ax[i].set_title('Direction Change', fontsize=8)
         ax[i].axis('off')
-    #plt.show()
+    if save_path is not None:
+        plt.savefig(save_path)
+    plt.show()
     plt.close()
 
 def get_directions(num_of_directions, mode):
@@ -699,8 +701,8 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
 
     # ------------------- plot the images with the centroids  -------------------
     if False:
-        centroids = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device_cpu))
-        plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device), centroids=centroids,
+        centroids_seq1 = calculate_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device_cpu))
+        plot_images_with_centroids(image=image_seq1.permute(1, 0, 2, 3).to(device), centroids=centroids_seq1,
                                    local_computer=local_computer)
 
     digit = torch.argmax(labels[0, 0, :]).item() + 1
@@ -741,7 +743,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         # Generate the image with S_churn=0.9
         generated_img, _ = sampler(
                 net=net, latents=latents, num_steps=num_steps, sigma_min=sigma_min, sigma_max=sigma_max,
-                rho=rho, S_churn=S_churn, image=image, plot_diffusion=True, S_noise=s_noise,
+                rho=rho, S_churn=S_churn, image=image, plot_diffusion=False, S_noise=s_noise,
                 particle_guidance_factor=particle_guidance_factor, local_computer=local_computer,
                 gamma_scheduler=gamma_scheduler, particle_guidance_distance=particle_guidance_distance,
                 alpha_scheduler=alpha_scheduler,
@@ -869,12 +871,15 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         S_noise_iterater = [-2, -1.5, -1, -0.5, 0]
         S_noise_logarithmic = 10 ** np.array(S_noise_iterater)
         S_noise_logarithmic = np.insert(S_noise_logarithmic, 0, 0)
-        #S_noise_logarithmic = [0]
+        if local_computer:
+            S_noise_logarithmic = [0]
         # add zero to the list
         particle_guidance_factor_iterater = [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75 , 1]#[ 1.5, 2, 2.5, 3]#
         particle_guidance_factor_logarithmic = 10 ** np.array(particle_guidance_factor_iterater)
         #particle_guidance_factor_logarithmic = [10, 100, 1000, 10000]
         #particle_guidance_factor_logarithmic = np.insert(particle_guidance_factor_logarithmic, 0, 0)
+        if local_computer:
+            particle_guidance_factor_logarithmic = [1]
         num_seq_iter = range(num_seq)
 
     else:
@@ -906,12 +911,12 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         "separate_grad_and_PG": separate_grad_and_pg,
         "generate_batch_sequentially": generate_batch_sequentially
     }
-
+    mean_quality_list = []
     for s_churn in S_noise_logarithmic:
         for particle_guidance_factor in particle_guidance_factor_logarithmic:
             # we want to have the same number of images for each case
             count_print += 1
-            dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32,
+            dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=12, num_digits=1, image_size=32,
                                       mode=mode,
                                       deterministic=False, log_direction_change=True, step_length=0.1,
                                       let_last_frame_after_change=False, use_label=True,
@@ -942,6 +947,8 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
                     if not 0 in prob_estimated and not pg_heatmap:
                         prob_estimated[0] = 0
                     results.append(prob_estimated[0])
+                    mean_quality_list.append(mean_quality)
+                    wandb.log({"Mean Quality": np.mean(np.array(mean_quality))})
                     wandb.log({"Mean": np.mean(np.array(results))})
 
                 if mode == 'horizontal' and not pg_heatmap:

@@ -95,6 +95,11 @@ def compute_distance_matrix(xs, distance='l2'):
                 iou = intersection / union
                 distance_matrix[i, j] = 1 - iou  # IoU distance is 1 - IoU
                 distance_matrix[j, i] = distance_matrix[i, j]
+    # compute the distance matrix with the cosine similarity
+    elif distance == 'cosine':
+        distance_matrix = 1 - torch.nn.functional.cosine_similarity(xs.flatten(1), xs.flatten(1), dim=1).view(n, n)
+    else:
+        distance_matrix = torch.cdist(xs.flatten(1), xs.flatten(1), p=2)
     return distance_matrix
 
 def compute_particle_guidance_grad(xs, gamma=1, alpha=1, distance='l2'):
@@ -201,10 +206,18 @@ def edm_sampler(
             denoised = net(x_input, t_hat, class_labels, num_cond_frames=net.num_cond_frames).to(torch.float64)
             #d_cur = (x_hat - denoised) / t_hat
             pg_grad = compute_particle_guidance_grad(denoised,gamma=gamma_schedule[i], alpha=alpha_schedule[i], distance=particle_guidance_distance)
+            distance_ = compute_distance_matrix(denoised, distance=particle_guidance_distance)
+            pg_grad_norm_to_distance = pg_grad / torch.norm(distance_)
+            example_ = torch.zeros_like(denoised)
             pg_grad_l2 = compute_particle_guidance_grad(denoised, gamma=gamma_schedule[i], alpha=alpha_schedule[i],distance='l2')
             pg_grad_iou = compute_particle_guidance_grad(denoised, gamma=gamma_schedule[i], alpha=alpha_schedule[i],distance='iou')
+            distance_mat_l2 = compute_distance_matrix(denoised, distance='l2')
+            distance_mat_iou = compute_distance_matrix(denoised, distance='iou')
+
             pg_grad_iou_norm.extend([torch.norm(pg_grad_iou[ii]) for ii in range(pg_grad_iou.shape[0])])
             pg_grad_l2_norm.extend([torch.norm(pg_grad_l2[ii]) for ii in range(pg_grad_l2.shape[0])])
+
+
 
            # pg_grad_normlized = pg_grad
            # for ii in range(pg_grad.shape[0]):
