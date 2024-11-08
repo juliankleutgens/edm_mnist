@@ -281,6 +281,7 @@ def edm_sampler(
             plot_the_gradient_norm(pg_grad_l2_norm, num_steps=num_steps, title=' Particle Guidance Gradient L2')
             plot_the_gradient_norm(particle_guidance_grad_norm, num_steps=num_steps, title=' Particle Guidance Gradient after sacling  PG')
             #plot_the_gradient_norm(d_ODE_norm, num_steps=num_steps, title='the greadient of ODE')
+        path_saveing = '/Users/juliankleutgens/PycharmProjects/edm-main/out/'
         plot_diffusion_process(intermediate_denoised, variable_name='Denoised', save_path=path_saveing)
         #plot_diffusion_process_conditional(intermediate_images, images=image, save_path=path_saveing)
         #plot_diffusion_process(intermediate_direction_cur, variable_name='ODE Direction', save_path=path_saveing)

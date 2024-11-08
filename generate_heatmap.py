@@ -716,7 +716,7 @@ def generate_images_and_save_heatmap(dataset_obj, dataset_sampler,
         polt_images_highlight_direction_change(image_data, direction_change)
         try:
             plot_images_with_centroids(image=(image.permute(1, 0, 2, 3).to(device_cpu) + 1) / 2, centroids=centroids,
-                                       local_computer=(local_computer and plotting))
+                                       local_computer=(local_computer and True))
         except Exception as e:
             print(f"Error: {e}")
 
@@ -916,7 +916,7 @@ def main(network_pkl, outdir, num_images, max_batch_size, num_steps, sigma_min, 
         for particle_guidance_factor in particle_guidance_factor_logarithmic:
             # we want to have the same number of images for each case
             count_print += 1
-            dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=12, num_digits=1, image_size=32,
+            dataset_obj = MovingMNIST(train=True, data_root=moving_mnist_path, seq_len=32, num_digits=1, image_size=32,
                                       mode=mode,
                                       deterministic=False, log_direction_change=True, step_length=0.1,
                                       let_last_frame_after_change=False, use_label=True,
