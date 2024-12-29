@@ -43,6 +43,7 @@ The datasets are generated dynamically using the provided data loaders.
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   pip install wandb torchvision torchsummary
    ```
 
 ## Training
