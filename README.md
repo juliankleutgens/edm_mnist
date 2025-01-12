@@ -46,33 +46,6 @@ The datasets are generated dynamically using the provided data loaders.
    pip install wandb torchvision torchsummary
    ```
 
-## Training
-
-### Unconditional Generation
-To train the model for unconditional generation (e.g., MNIST digit diversity):
-```bash
-python train.py --task unconditional --dataset moving_mnist --batch_size 512 --epochs 20
-```
-
-### Conditional Generation
-To train the model for conditional generation (e.g., predicting next frames):
-```bash
-python train.py --task conditional --dataset free_mnist --sequence_length 16 --batch_size 512 --epochs 22
-```
-
-## Evaluation
-
-### Unconditional Experiments
-To evaluate unconditional experiments (e.g., mode discovery):
-```bash
-python evaluate.py --task unconditional --config configs/unconditional.yaml
-```
-
-### Conditional Experiments
-To evaluate conditional experiments (e.g., next-frame prediction):
-```bash
-python evaluate.py --task conditional --config configs/conditional.yaml
-```
 
 ## Key Scripts
 
